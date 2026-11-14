@@ -592,12 +592,13 @@ export function toggleShuffle(): void {
 	const cur = currentTrack();
 	player.shuffle = !player.shuffle;
 	if (player.shuffle) {
-		const rest = shuffled(base.filter((t) => t !== cur));
+		const rest = shuffled(base.filter((t) => t.ratingKey !== cur?.ratingKey));
 		player.queue = cur ? [cur, ...rest] : rest;
 		player.index = cur ? 0 : -1;
 	} else {
 		player.queue = base.slice();
-		player.index = cur ? base.indexOf(cur) : -1;
+		// By ratingKey: `cur` is a state proxy, `base` holds the raw objects, so indexOf misses.
+		player.index = cur ? base.findIndex((t) => t.ratingKey === cur.ratingKey) : -1;
 	}
 	reprime();
 	persist();

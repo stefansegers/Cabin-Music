@@ -180,7 +180,10 @@
 				key: 'loved',
 				title: 'Loved',
 				items,
-				onItem: (t: Metadata) => playList(items, Math.max(0, items.indexOf(t)))
+				// Match by ratingKey: `t` arrives as a Svelte state proxy, so indexOf(t) never finds it
+				// (and every tile played the first track).
+				onItem: (t: Metadata) =>
+					playList(items, Math.max(0, items.findIndex((x) => x.ratingKey === t.ratingKey)))
 			};
 			rows = [...rows, row]; // append at the bottom of the page
 
