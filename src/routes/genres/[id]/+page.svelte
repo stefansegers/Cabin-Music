@@ -6,6 +6,8 @@
 	import { playList } from '$lib/stores/player.svelte';
 	import VirtualGrid from '$lib/components/VirtualGrid.svelte';
 	import Icon from '$lib/components/Icon.svelte';
+	import PinButton from '$lib/components/PinButton.svelte';
+	import { pinId } from '$lib/stores/pins.svelte';
 	import type { PageResult } from '$lib/plex/types';
 
 	const section = $derived(activeSection());
@@ -46,6 +48,18 @@
 			<Icon name="shuffle" size={18} />
 			{shuffling ? 'Loading…' : 'Shuffle genre'}
 		</button>
+		{#if section}
+			<PinButton
+				pin={{
+					id: pinId('genre', section.key, genreId),
+					kind: 'genre',
+					key: genreId,
+					sectionId: section.key,
+					title: name,
+					subtitle: `Genre · ${section.title}`
+				}}
+			/>
+		{/if}
 	</div>
 	{#if shuffleError}<p class="err">{shuffleError}</p>{/if}
 

@@ -10,6 +10,8 @@
 	import LibraryChips from '$lib/components/LibraryChips.svelte';
 	import TrackList from '$lib/components/TrackList.svelte';
 	import Icon from '$lib/components/Icon.svelte';
+	import PinButton from '$lib/components/PinButton.svelte';
+	import { pinId } from '$lib/stores/pins.svelte';
 
 	const section = $derived(activeSection());
 	const folderKey = $derived(page.url.searchParams.get('k') ?? undefined);
@@ -62,17 +64,35 @@
 	{:else if error}
 		<p class="err">{error}</p>
 	{:else if listing}
-		{#if listing.tracks.length}
+		{#if listing.tracks.length || (folderKey && section)}
 			<div class="actions">
+				{#if listing.tracks.length}
 				<button class="play-btn" onclick={() => playList(listing!.tracks, 0, { shuffle: false })}>
 					<Icon name="play" size={20} /> Play
 				</button>
 				<button class="shuffle-btn" onclick={() => playList(listing!.tracks, 0, { shuffle: true })}>
 					<Icon name="shuffle" size={18} /> Shuffle
 				</button>
-				<span class="dim count">
-					{listing.tracks.length} track{listing.tracks.length === 1 ? '' : 's'}
-				</span>
+				{/if}
+				{#if folderKey && section}
+					{@const first = listing.tracks[0]}
+					<PinButton
+						pin={{
+							id: pinId('folder', section.key, folderKey),
+							kind: 'folder',
+							key: folderKey,
+							sectionId: section.key,
+							title: folderName || 'Folder',
+							subtitle: `Folder · ${section.title}`,
+							thumb: first ? (first.parentThumb ?? first.thumb ?? first.grandparentThumb) : undefined
+						}}
+					/>
+				{/if}
+				{#if listing.tracks.length}
+					<span class="dim count">
+						{listing.tracks.length} track{listing.tracks.length === 1 ? '' : 's'}
+					</span>
+				{/if}
 			</div>
 		{/if}
 

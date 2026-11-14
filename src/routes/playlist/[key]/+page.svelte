@@ -5,6 +5,8 @@
 	import { playList } from '$lib/stores/player.svelte';
 	import TrackList from '$lib/components/TrackList.svelte';
 	import Icon from '$lib/components/Icon.svelte';
+	import PinButton from '$lib/components/PinButton.svelte';
+	import { pinId } from '$lib/stores/pins.svelte';
 	import type { Metadata } from '$lib/plex/types';
 
 	let header = $state<Metadata | null>(null);
@@ -85,6 +87,17 @@
 					>
 						<Icon name="shuffle" size={18} /> Shuffle
 					</button>
+					<PinButton
+						pin={{
+							id: pinId('playlist', '', header.ratingKey),
+							kind: 'playlist',
+							key: header.ratingKey,
+							sectionId: '',
+							title: header.title,
+							subtitle: 'Playlist',
+							thumb: header.composite ?? header.thumb
+						}}
+					/>
 				</div>
 			</div>
 		</header>

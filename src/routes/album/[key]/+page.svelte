@@ -5,6 +5,9 @@
 	import { playList } from '$lib/stores/player.svelte';
 	import TrackList from '$lib/components/TrackList.svelte';
 	import Icon from '$lib/components/Icon.svelte';
+	import PinButton from '$lib/components/PinButton.svelte';
+	import { pinId } from '$lib/stores/pins.svelte';
+	import { activeSection } from '$lib/stores/library.svelte';
 	import type { Metadata } from '$lib/plex/types';
 
 	let header = $state<Metadata | null>(null);
@@ -13,6 +16,7 @@
 	let error = $state<string | null>(null);
 
 	const key = $derived(page.params.key);
+	const sid = $derived(String(header?.librarySectionID ?? activeSection()?.key ?? ''));
 	const heroArt = $derived(header ? artUrl(header.thumb, 320) : null);
 	const metaTail = $derived.by(() => {
 		const parts: string[] = [];
@@ -83,6 +87,17 @@
 					>
 						<Icon name="shuffle" size={18} /> Shuffle
 					</button>
+					<PinButton
+						pin={{
+							id: pinId('album', sid, header.ratingKey),
+							kind: 'album',
+							key: header.ratingKey,
+							sectionId: sid,
+							title: header.title,
+							subtitle: header.parentTitle,
+							thumb: header.thumb
+						}}
+					/>
 				</div>
 			</div>
 		</header>

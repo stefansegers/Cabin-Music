@@ -87,6 +87,12 @@
 	{:else if name === 'genre'}
 		<path d="M3 12V4a1 1 0 0 1 1-1h8l9 9-9 9z" />
 		<circle cx="7.5" cy="7.5" r="1.5" fill="currentColor" stroke="none" />
+	{:else if name === 'pin'}
+		<path d="M9 4h6l-1 5 3 3v2H7v-2l3-3z" />
+		<path d="M12 14v6" />
+	{:else if name === 'pin-filled'}
+		<path d="M9 4h6l-1 5 3 3v2H7v-2l3-3z" fill="currentColor" />
+		<path d="M12 14v6" />
 	{:else if name === 'chevron-right'}
 		<path d="M9 5l7 7-7 7" />
 	{:else if name === 'check'}

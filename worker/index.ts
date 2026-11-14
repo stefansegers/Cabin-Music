@@ -19,6 +19,47 @@ interface Env {
 	ASSETS: { fetch: (request: Request) => Promise<Response> };
 	/** Optional shared passphrase. When set, /plex + /img require the cabin_auth cookie. */
 	CABIN_PASSPHRASE?: string;
+	/** Optional KV for synced app state (pins). Without it, /state answers 404 and the SPA keeps
+	 *  state in the browser only. */
+	CABIN_KV?: {
+		get(key: string): Promise<string | null>;
+		put(key: string, value: string): Promise<void>;
+	};
+}
+
+// ── Synced state (/state/<name>) ────────────────────────────────────────────────────────────────
+// Small JSON documents shared between devices (e.g. pins made on the Mac show up in the car). Only
+// with the passphrase gate ON: without it anyone with the URL could overwrite them, so the route is
+// disabled and the SPA falls back to browser storage.
+const STATE_NAMES = new Set(['pins']);
+const STATE_MAX_BYTES = 64 * 1024;
+
+async function handleState(request: Request, env: Env, name: string): Promise<Response> {
+	if (!env.CABIN_KV || !gateEnabled(env) || !STATE_NAMES.has(name)) {
+		return new Response('not found', { status: 404 });
+	}
+	if (!(await isAuthed(request, env))) {
+		return new Response(GATE_401_BODY, { status: 401 });
+	}
+	const key = `state:${name}`;
+	if (request.method === 'GET') {
+		const value = await env.CABIN_KV.get(key);
+		return new Response(value ?? 'null', {
+			headers: { 'content-type': 'application/json', 'cache-control': 'no-store' }
+		});
+	}
+	if (request.method === 'PUT') {
+		const body = await request.text();
+		if (body.length > STATE_MAX_BYTES) return new Response('too large', { status: 413 });
+		try {
+			JSON.parse(body);
+		} catch {
+			return new Response('bad json', { status: 400 });
+		}
+		await env.CABIN_KV.put(key, body);
+		return new Response(null, { status: 204 });
+	}
+	return new Response('method not allowed', { status: 405 });
 }
 
 // SSRF guard: only proxy to Plex's own hosts.
@@ -174,6 +215,10 @@ export default {
 				});
 			}
 			return handleAuth(request, env);
+		}
+
+		if (url.pathname.startsWith('/state/')) {
+			return handleState(request, env, url.pathname.slice('/state/'.length));
 		}
 
 		if (url.pathname === '/plex') {

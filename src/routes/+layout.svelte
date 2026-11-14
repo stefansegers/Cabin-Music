@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { loadPins } from '$lib/stores/pins.svelte';
 	import '../app.css';
 	import { onMount } from 'svelte';
 	import DebugPanel from '$lib/components/DebugPanel.svelte';
@@ -40,6 +41,15 @@
 	$effect(() => {
 		if (session.status === 'connected' && !library.loaded && !library.loading) {
 			void loadSections();
+		}
+	});
+
+	// Once connected, pull the synced pins (Home shows the browser-cached ones meanwhile).
+	let pinsLoaded = false;
+	$effect(() => {
+		if (session.status === 'connected' && !pinsLoaded) {
+			pinsLoaded = true;
+			void loadPins();
 		}
 	});
 </script>

@@ -13,7 +13,7 @@ import {
 	pagePlayQueue,
 	reportTimeline
 } from '$lib/plex/playback';
-import { getSonicallySimilar } from '$lib/plex/library';
+import { getSonicallySimilar, getMetadata, getGenreTracksShuffled, getAll, TYPE } from '$lib/plex/library';
 import { readJSON, writeJSON } from '$lib/plex/storage';
 import { STORAGE_PREFIX } from '$lib/plex/config';
 import { logEvent } from '$lib/stores/debug.svelte';
@@ -29,6 +29,25 @@ function loadKeepAlive(): KeepAlive {
 	return KEEP_MODES.includes(v) ? v : 'tone';
 }
 export const keepAlive = $state({ mode: loadKeepAlive() });
+
+// Autoplay: when the queue runs out, keep going with sonically similar music (no silence).
+const AUTOPLAY_KEY = STORAGE_PREFIX + 'autoplay';
+export const autoplay = $state({ on: readJSON<boolean>(AUTOPLAY_KEY, true) !== false });
+export function setAutoplay(on: boolean): void {
+	autoplay.on = on;
+	writeJSON(AUTOPLAY_KEY, on);
+	if (on) maybeAutoExtend();
+}
+
+/** Long tracks (DJ mixes, live sets) resume where you left off; short songs always start at 0. */
+const RESUME_MIN_MS = 10 * 60 * 1000;
+/** Where a long track should start: its Plex resume point, unless (nearly) finished or barely begun. */
+function resumePointMs(t: Metadata | null | undefined): number {
+	const dur = t?.duration ?? 0;
+	const off = t?.viewOffset ?? 0;
+	if (dur < RESUME_MIN_MS || off < 30_000 || off > dur - 120_000) return 0;
+	return off;
+}
 
 export type Repeat = 'off' | 'all' | 'one';
 export interface RadioState {
@@ -295,14 +314,44 @@ function load(track: Metadata, autoplay: boolean) {
 	a.src = candidates[0];
 	a.load();
 	loadAt = Date.now();
+	resumeLongTrack(a, track);
 	// Publish the new track's timeline now, from Plex's duration, before anything plays. The position
 	// must never be unset while two elements are playing: Chromium ≤150 answers that by wiping the
 	// title and artwork from the system's media controls.
-	player.currentTime = 0;
+	player.currentTime = resumePointMs(track) / 1000;
 	player.duration = (track.duration ?? 0) / 1000;
 	setNowPlayingMetadata(track);
 	syncMediaPosition();
 	if (autoplay) play();
+}
+
+/** Start a long track (mix/live set) at its resume point. The point in the list we played from may be
+ *  stale (it was fetched before the last listen), so the fresh one is fetched and wins if the track
+ *  has not really started yet. */
+function resumeLongTrack(a: HTMLAudioElement, track: Metadata) {
+	if ((track.duration ?? 0) < RESUME_MIN_MS) return;
+	const seekOnce = (ms: number) => {
+		if (!ms) return;
+		const apply = () => {
+			if (currentTrack() !== track || a.currentTime > 15) return; // moved on, or user already seeked
+			a.currentTime = ms / 1000;
+			player.currentTime = ms / 1000;
+			syncMediaPosition();
+		};
+		if (a.readyState >= 1) apply();
+		else a.addEventListener('loadedmetadata', apply, { once: true });
+	};
+	const listed = resumePointMs(track);
+	seekOnce(listed);
+	void getMetadata(track.ratingKey)
+		.then((fresh) => {
+			const ms = resumePointMs(fresh ? { ...track, viewOffset: fresh.viewOffset ?? 0 } : null);
+			if (ms && Math.abs(ms - listed) > 10_000) {
+				logEvent(`resume "${track.title}" at ${Math.round(ms / 60000)} min`);
+				seekOnce(ms);
+			}
+		})
+		.catch(() => {});
 }
 
 function onError() {
@@ -333,6 +382,7 @@ function goTo(i: number) {
 	const t = currentTrack();
 	if (t) load(t, true);
 	persist();
+	maybeAutoExtend();
 }
 
 // --- public actions ---
@@ -359,6 +409,7 @@ export function playList(
 	const t = currentTrack();
 	if (t) load(t, true);
 	persist();
+	maybeAutoExtend();
 }
 
 /** Append more tracks to the queue (used by radio paging in 3b). */
@@ -403,15 +454,108 @@ export function next(auto = false): void {
 	if (i >= player.queue.length) {
 		if (player.repeat === 'all') i = 0;
 		else {
-			// End of queue. (Radio extension is wired in 3b via appendToQueue.)
+			// End of queue: keep the music going with similar tracks (autoplay), else stop.
+			if (autoplay.on && !player.radio) {
+				void autoExtend().then((added) => {
+					if (added && player.index + 1 < player.queue.length) goTo(player.index + 1);
+					else if (auto) endOfQueue();
+				});
+				return;
+			}
 			if (!auto) return; // Next on the last track: nothing to skip to, keep playing
-			logEvent(`end of queue${vis()}`);
-			halt();
-			persist();
+			endOfQueue();
 			return;
 		}
 	}
 	goTo(i);
+}
+
+function endOfQueue() {
+	logEvent(`end of queue${vis()}`);
+	halt();
+	persist();
+}
+
+// --- autoplay ---
+let autoExtending: Promise<boolean> | null = null;
+
+/** Top up the queue in the background when it is about to run out, so the next track is ready. */
+function maybeAutoExtend() {
+	if (!autoplay.on || player.radio || !player.queue.length) return;
+	if (player.index >= player.queue.length - 2) void autoExtend();
+}
+
+/** Append tracks that sound like the end of the queue (Plex sonic analysis). Falls back to the last
+ *  artist's radio when a track has no sonic neighbours. Resolves true when something was added. */
+function autoExtend(): Promise<boolean> {
+	if (autoExtending) return autoExtending;
+	autoExtending = (async () => {
+		const seed = player.queue[player.queue.length - 1];
+		if (!seed?.ratingKey) return false;
+		const have = new Set(player.queue.map((t) => t.ratingKey));
+		try {
+			const similar = await getSonicallySimilar(seed.ratingKey, { limit: 40 }).catch(() => []);
+			const fresh = similar.filter(
+				(t) => t.type === 'track' && !have.has(t.ratingKey) && !!t.Media?.[0]?.Part?.[0]?.key
+			);
+			// The closest matches first, lightly shuffled so the same seed doesn't give the same run.
+			const pick = shuffled(fresh.slice(0, 25)).slice(0, 15);
+			if (pick.length) {
+				logEvent(`autoplay: +${pick.length} similar to "${seed.title}"`);
+				appendToQueue(pick);
+				return true;
+			}
+			const artistKey = seed.grandparentRatingKey;
+			if (artistKey) try {
+				const stationKey = await getArtistStationKey(artistKey);
+				if (stationKey) {
+					const q = await createPlayQueue(stationUri(stationKey), { continuous: true });
+					const items = q.items.filter((t) => !have.has(t.ratingKey)).slice(0, 15);
+					if (items.length) {
+						logEvent(`autoplay: +${items.length} from artist radio of "${seed.grandparentTitle ?? '?'}"`);
+						appendToQueue(items);
+						return true;
+					}
+				}
+			} catch {
+				/* artist radio unavailable — try the genre next */
+			}
+			// No sonic data (analysis not run / not usable on this server): stay in the same genre. The
+			// FIRST genre of the album counts — files often carry several, and the first is the real one.
+			const [full, album] = await Promise.all([
+				getMetadata(seed.ratingKey).catch(() => null),
+				seed.parentRatingKey ? getMetadata(seed.parentRatingKey).catch(() => null) : null
+			]);
+			const sectionId = String(full?.librarySectionID ?? album?.librarySectionID ?? '');
+			const genre = album?.Genre?.[0] ?? full?.Genre?.[0];
+			if (sectionId && genre?.id != null) {
+				const tracks = await getGenreTracksShuffled(sectionId, String(genre.id), 40);
+				const items = tracks.filter((t) => !have.has(t.ratingKey)).slice(0, 15);
+				if (items.length) {
+					logEvent(`autoplay: +${items.length} from genre "${genre.tag}"`);
+					appendToQueue(items);
+					return true;
+				}
+			}
+			if (sectionId) {
+				const res = await getAll(sectionId, { type: TYPE.track, sort: 'random', size: 30 });
+				const items = res.items.filter((t) => !have.has(t.ratingKey)).slice(0, 15);
+				if (items.length) {
+					logEvent(`autoplay: +${items.length} random from the library`);
+					appendToQueue(items);
+					return true;
+				}
+			}
+			logEvent(`autoplay: nothing found after "${seed.title}"`);
+			return false;
+		} catch (e) {
+			logEvent(`autoplay failed: ${(e as Error)?.message ?? e}`);
+			return false;
+		}
+	})().finally(() => {
+		autoExtending = null;
+	});
+	return autoExtending;
 }
 
 export function prev(): void {

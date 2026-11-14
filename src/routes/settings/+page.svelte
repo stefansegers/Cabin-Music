@@ -10,7 +10,14 @@
 		QUALITY_KBPS,
 		type Quality
 	} from '$lib/stores/quality.svelte';
-	import { invalidatePrefetch, keepAlive, setKeepAlive, type KeepAlive } from '$lib/stores/player.svelte';
+	import {
+		invalidatePrefetch,
+		keepAlive,
+		setKeepAlive,
+		autoplay,
+		setAutoplay,
+		type KeepAlive
+	} from '$lib/stores/player.svelte';
 	import { session } from '$lib/stores/session.svelte';
 	import { toggleDebug } from '$lib/stores/debug.svelte';
 	import { signOut } from '$lib/plex/auth';
@@ -95,6 +102,18 @@
 					{QUALITY_LABEL[q]}{#if q !== 'original'}&nbsp;· {QUALITY_KBPS[q]}k{/if}
 				</button>
 			{/each}
+		</div>
+	</div>
+
+	<div class="group">
+		<h2>Autoplay</h2>
+		<p class="dim">
+			When an album, folder or song ends, keep playing music that sounds like it (Plex sonic
+			analysis), so there's never silence.
+		</p>
+		<div class="seg">
+			<button class="seg-btn" class:sel={autoplay.on} onclick={() => setAutoplay(true)}>On</button>
+			<button class="seg-btn" class:sel={!autoplay.on} onclick={() => setAutoplay(false)}>Off</button>
 		</div>
 	</div>
 

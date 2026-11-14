@@ -5,6 +5,7 @@
 	import { playMixItem, playArtistRadio, playList } from '$lib/stores/player.svelte';
 	import { logEvent } from '$lib/stores/debug.svelte';
 	import HubRow from '$lib/components/HubRow.svelte';
+	import HomeShelves from '$lib/components/HomeShelves.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import type { Hub, Metadata } from '$lib/plex/types';
 
@@ -244,6 +245,8 @@
 			<Icon name="shuffle" size={18} /> Shuffle all
 		</button>
 	</div>
+
+	<HomeShelves />
 
 	{#if loading && rows.length === 0}
 		<div class="center"><div class="spinner" aria-hidden="true"></div></div>

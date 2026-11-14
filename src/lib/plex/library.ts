@@ -334,3 +334,30 @@ export async function getGenreTracksShuffled(
 	});
 	return metas(container(data));
 }
+
+/** Long tracks (mixes, live sets) the user stopped part-way through, most recent first — the
+ *  "Continue listening" row. Plex keeps the resume point (viewOffset) server-side, so this is the
+ *  same on every device. */
+export async function getInProgress(
+	sectionId: string,
+	opts: { size?: number; minDurationMs?: number } = {},
+	signal?: AbortSignal
+): Promise<Metadata[]> {
+	const { size = 30, minDurationMs = 10 * 60 * 1000 } = opts;
+	const data = await serverFetch<any>(`/library/sections/${sectionId}/all`, {
+		query: {
+			type: TYPE.track,
+			inProgress: 1,
+			sort: 'lastViewedAt:desc',
+			'X-Plex-Container-Start': 0,
+			'X-Plex-Container-Size': size
+		},
+		signal
+	});
+	// Keep only real "part-way" listens: long enough, started, and not (nearly) finished.
+	return metas(container(data)).filter((t) => {
+		const d = t.duration ?? 0;
+		const o = t.viewOffset ?? 0;
+		return d >= minDurationMs && o >= 30_000 && o <= d - 120_000;
+	});
+}

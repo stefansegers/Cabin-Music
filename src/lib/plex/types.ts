@@ -92,6 +92,8 @@ export interface Metadata {
 	userRating?: number; // 0–10 star rating; Cabin treats 10 as "loved" (heart)
 	viewOffset?: number; // ms — server-side resume point ("where you left off")
 	playQueueItemID?: number; // present on items returned from /playQueues
+	librarySectionID?: number | string; // section an item belongs to (on full metadata)
+	Genre?: { id?: number | string; tag: string }[]; // genre tags (full metadata); the first one counts
 	Media?: { Part?: { key?: string }[] }[];
 }
 
