@@ -13,13 +13,15 @@
 	const section = $derived(activeSection());
 	const genreId = $derived(page.params.id ?? '');
 	const name = $derived(page.url.searchParams.get('n') ?? 'Genre');
+	// Genre or mood; the id may be several raw tag ids joined by commas (a merged group).
+	const kind = $derived<'genre' | 'mood'>(page.url.searchParams.get('kind') === 'mood' ? 'mood' : 'genre');
 
 	let shuffling = $state(false);
 	let shuffleError = $state<string | null>(null);
 
-	function makeLoad(sectionId: string, id: string) {
+	function makeLoad(sectionId: string, id: string, k: 'genre' | 'mood') {
 		return (start: number, size: number): Promise<PageResult> =>
-			getGenreAlbums(sectionId, id, { start, size });
+			getGenreAlbums(sectionId, id, { start, size, kind: k });
 	}
 
 	async function shuffleGenre() {
@@ -27,9 +29,9 @@
 		shuffling = true;
 		shuffleError = null;
 		try {
-			const tracks = await getGenreTracksShuffled(section.key, genreId);
+			const tracks = await getGenreTracksShuffled(section.key, genreId, 200, undefined, { kind });
 			if (tracks.length) playList(tracks, 0, { shuffle: false });
-			else shuffleError = 'No tracks found in this genre.';
+			else shuffleError = `No tracks found in this ${kind}.`;
 		} catch (e) {
 			shuffleError = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -40,23 +42,23 @@
 
 <section class="page">
 	<button class="back" onclick={() => history.back()}>← Back</button>
-	<p class="kind">Genre</p>
+	<p class="kind">{kind === 'mood' ? 'Mood' : 'Genre'}</p>
 	<h1>{name}</h1>
 
 	<div class="actions">
 		<button class="play-btn" onclick={shuffleGenre} disabled={shuffling || !section}>
 			<Icon name="shuffle" size={18} />
-			{shuffling ? 'Loading…' : 'Shuffle genre'}
+			{shuffling ? 'Loading…' : kind === 'mood' ? 'Shuffle mood' : 'Shuffle genre'}
 		</button>
 		{#if section}
 			<PinButton
 				pin={{
-					id: pinId('genre', section.key, genreId),
-					kind: 'genre',
+					id: pinId(kind, section.key, genreId),
+					kind,
 					key: genreId,
 					sectionId: section.key,
 					title: name,
-					subtitle: `Genre · ${section.title}`
+					subtitle: `${kind === 'mood' ? 'Mood' : 'Genre'} · ${section.title}`
 				}}
 			/>
 		{/if}
@@ -64,8 +66,8 @@
 	{#if shuffleError}<p class="err">{shuffleError}</p>{/if}
 
 	{#if section && genreId}
-		{#key `${section.key}:${genreId}`}
-			<VirtualGrid load={makeLoad(section.key, genreId)} />
+		{#key `${section.key}:${kind}:${genreId}`}
+			<VirtualGrid load={makeLoad(section.key, genreId, kind)} />
 		{/key}
 	{/if}
 </section>

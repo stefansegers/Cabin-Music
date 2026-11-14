@@ -298,14 +298,14 @@ export async function getGenres(sectionId: string, signal?: AbortSignal): Promis
 export async function getGenreAlbums(
 	sectionId: string,
 	genreId: string,
-	opts: { start?: number; size?: number; sort?: string } = {},
+	opts: { start?: number; size?: number; sort?: string; kind?: 'genre' | 'mood' } = {},
 	signal?: AbortSignal
 ): Promise<PageResult> {
-	const { start = 0, size = 60, sort = 'titleSort:asc' } = opts;
+	const { start = 0, size = 60, sort = 'titleSort:asc', kind = 'genre' } = opts;
 	const data = await serverFetch<any>(`/library/sections/${sectionId}/all`, {
 		query: {
 			type: TYPE.album,
-			genre: genreId,
+			[kind]: genreId, // one id or several comma-separated (Plex ORs them)
 			sort,
 			'X-Plex-Container-Start': start,
 			'X-Plex-Container-Size': size
@@ -320,13 +320,15 @@ export async function getGenreTracksShuffled(
 	sectionId: string,
 	genreId: string,
 	size = 200,
-	signal?: AbortSignal
+	signal?: AbortSignal,
+	opts: { kind?: 'genre' | 'mood'; sort?: string } = {}
 ): Promise<Metadata[]> {
+	const { kind = 'genre', sort = 'random' } = opts;
 	const data = await serverFetch<any>(`/library/sections/${sectionId}/all`, {
 		query: {
 			type: TYPE.track,
-			'album.genre': genreId,
-			sort: 'random',
+			[`album.${kind}`]: genreId,
+			sort,
 			'X-Plex-Container-Start': 0,
 			'X-Plex-Container-Size': size
 		},
@@ -360,4 +362,18 @@ export async function getInProgress(
 		const o = t.viewOffset ?? 0;
 		return d >= minDurationMs && o >= 30_000 && o <= d - 120_000;
 	});
+}
+
+/** Recently played albums (with their genre tags) — the listening history Daily Mixes are built on. */
+export async function getRecentAlbums(sectionId: string, size = 200, signal?: AbortSignal): Promise<Metadata[]> {
+	const data = await serverFetch<any>(`/library/sections/${sectionId}/all`, {
+		query: {
+			type: TYPE.album,
+			sort: 'lastViewedAt:desc',
+			'X-Plex-Container-Start': 0,
+			'X-Plex-Container-Size': size
+		},
+		signal
+	});
+	return metas(container(data)).filter((a) => a.lastViewedAt);
 }

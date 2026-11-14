@@ -5,6 +5,7 @@
 import type { Metadata } from '$lib/plex/types';
 import { playbackCandidates, artUrl } from '$lib/plex/media';
 import { dropLocalStream } from '$lib/plex/localStream';
+import { cachedTagGroups, groupForTag } from '$lib/plex/tags';
 import {
 	getArtistStationKey,
 	resolveMixStationKey,
@@ -529,7 +530,10 @@ function autoExtend(): Promise<boolean> {
 			const sectionId = String(full?.librarySectionID ?? album?.librarySectionID ?? '');
 			const genre = album?.Genre?.[0] ?? full?.Genre?.[0];
 			if (sectionId && genre?.id != null) {
-				const tracks = await getGenreTracksShuffled(sectionId, String(genre.id), 40);
+				// Use the cleaned-up group (all spellings of this genre) when it is known.
+				const group = groupForTag(cachedTagGroups(sectionId, 'genre') ?? [], genre.tag);
+				const ids = group ? group.ids.join(',') : String(genre.id);
+				const tracks = await getGenreTracksShuffled(sectionId, ids, 40);
 				const items = tracks.filter((t) => !have.has(t.ratingKey)).slice(0, 15);
 				if (items.length) {
 					logEvent(`autoplay: +${items.length} from genre "${genre.tag}"`);

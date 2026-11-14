@@ -11,7 +11,7 @@ const KEY = STORAGE_PREFIX + 'pins';
 const SYNC_URL = '/state/pins';
 const MAX_PINS = 40;
 
-export type PinKind = 'folder' | 'genre' | 'playlist' | 'album';
+export type PinKind = 'folder' | 'genre' | 'mood' | 'playlist' | 'album';
 
 export interface Pin {
 	id: string; // `${kind}:${sectionId}:${key}` — stable, so pinning twice is a no-op

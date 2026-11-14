@@ -14,6 +14,10 @@
 	} from '$lib/plex/library';
 	import { logEvent } from '$lib/stores/debug.svelte';
 	import ShelfTile from './ShelfTile.svelte';
+	import DailyMixCard from './DailyMixCard.svelte';
+	import { activeSection } from '$lib/stores/library.svelte';
+	import { session } from '$lib/stores/session.svelte';
+	import { buildDailyMixes, cachedDailyMixes, dailyMixTracks, type DailyMix } from '$lib/plex/dailyMixes';
 	import type { Metadata } from '$lib/plex/types';
 
 	const TILE = 168;
@@ -25,6 +29,8 @@
 				return `/folders?${new URLSearchParams({ k: p.key, n: p.title })}`;
 			case 'genre':
 				return `/genres/${encodeURIComponent(p.key)}?n=${encodeURIComponent(p.title)}`;
+			case 'mood':
+				return `/genres/${encodeURIComponent(p.key)}?n=${encodeURIComponent(p.title)}&kind=mood`;
 			case 'playlist':
 				return `/playlist/${p.key}`;
 			case 'album':
@@ -35,6 +41,7 @@
 	const ICON: Record<Pin['kind'], string> = {
 		folder: 'folder',
 		genre: 'genre',
+		mood: 'genre',
 		playlist: 'playlist',
 		album: 'album'
 	};
@@ -57,7 +64,10 @@
 					break;
 				}
 				case 'genre':
-					playList(await getGenreTracksShuffled(p.sectionId, p.key), 0, { shuffle: false });
+				case 'mood':
+					playList(await getGenreTracksShuffled(p.sectionId, p.key, 200, undefined, { kind: p.kind }), 0, {
+						shuffle: false
+					});
 					break;
 				case 'playlist':
 					playList((await getPlaylistItems(p.key, { size: 500 })).items, 0);
@@ -68,6 +78,34 @@
 			}
 		} catch (e) {
 			logEvent(`pin play failed: ${(e as Error)?.message ?? e}`);
+		}
+	}
+
+	// --- Made for <name>: Daily Mixes for the active library ---
+	const firstName = $derived(
+		(session.account?.title ?? session.account?.username ?? '').trim().split(/\s+/)[0] || 'you'
+	);
+	let dailyMixes = $state<DailyMix[]>([]);
+
+	$effect(() => {
+		const sec = activeSection();
+		if (!sec) return;
+		dailyMixes = cachedDailyMixes(sec.key) ?? [];
+		const ctrl = new AbortController();
+		buildDailyMixes(sec.key, ctrl.signal)
+			.then((m) => {
+				if (!ctrl.signal.aborted) dailyMixes = m;
+			})
+			.catch((e) => logEvent(`daily mixes failed: ${(e as Error)?.message ?? e}`));
+		return () => ctrl.abort();
+	});
+
+	async function playDailyMix(m: DailyMix) {
+		try {
+			const tracks = await dailyMixTracks(m);
+			if (tracks.length) playList(tracks, 0, { shuffle: false });
+		} catch (e) {
+			logEvent(`daily mix play failed: ${(e as Error)?.message ?? e}`);
 		}
 	}
 
@@ -123,6 +161,19 @@
 						onOpen={() => openPin(p)}
 						onPlay={() => playPin(p)}
 					/>
+				</div>
+			{/each}
+		</div>
+	</section>
+{/if}
+
+{#if dailyMixes.length}
+	<section class="shelf">
+		<h2>Made for {firstName}</h2>
+		<div class="row">
+			{#each dailyMixes as m (m.id)}
+				<div class="slot" style="width: {200 / 16}rem">
+					<DailyMixCard mix={m} size={200} onPlay={() => playDailyMix(m)} />
 				</div>
 			{/each}
 		</div>
