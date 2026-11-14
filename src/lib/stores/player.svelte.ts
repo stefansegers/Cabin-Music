@@ -3,7 +3,10 @@
 // radio (server play queue) is layered on in playback.ts (3b).
 
 import type { Metadata } from '$lib/plex/types';
-import { playbackCandidates, artUrl } from '$lib/plex/media';
+import { playbackCandidates, artUrl, transcodeUrl } from '$lib/plex/media';
+import { GaplessStream, gaplessSupported } from '$lib/plex/gapless';
+import { bitrateFor } from '$lib/stores/quality.svelte';
+import { session } from '$lib/stores/session.svelte';
 import { dropLocalStream } from '$lib/plex/localStream';
 import { cachedTagGroups, groupForTag } from '$lib/plex/tags';
 import {
@@ -42,6 +45,47 @@ export function setAutoplay(on: boolean): void {
 
 /** Long tracks (DJ mixes, live sets) resume where you left off; short songs always start at 0. */
 const RESUME_MIN_MS = 10 * 60 * 1000;
+// Gapless albums: consecutive tracks of one album (DJ mixes, live albums) play without a gap on the
+// SAME audio element through a MediaSource stream (see gapless.ts). Settings can turn it off.
+const GAPLESS_KEY = STORAGE_PREFIX + 'gapless';
+export const gapless = $state({ on: readJSON<boolean>(GAPLESS_KEY, true) !== false });
+export function setGapless(on: boolean): void {
+	gapless.on = on;
+	writeJSON(GAPLESS_KEY, on);
+}
+const GAPLESS_MIN_MS = 20_000;
+const GAPLESS_MAX_MS = 20 * 60 * 1000;
+let stream: GaplessStream | null = null;
+let gaplessBlocked = ''; // album (parentRatingKey) where the stream failed — play it the normal way
+
+function gaplessPair(a: Metadata | null | undefined, b: Metadata | null | undefined): boolean {
+	if (!a || !b || !a.parentRatingKey || a.parentRatingKey !== b.parentRatingKey) return false;
+	return [a, b].every((t) => {
+		const d = t.duration ?? 0;
+		return d >= GAPLESS_MIN_MS && d <= GAPLESS_MAX_MS;
+	});
+}
+/** Queue index of a track, searching from the current position (the queue can repeat tracks). */
+function queueIndexOf(t: Metadata): number {
+	const from = Math.max(0, player.index);
+	for (let i = from; i < player.queue.length; i++) if (player.queue[i].ratingKey === t.ratingKey) return i;
+	return player.queue.findIndex((x) => x.ratingKey === t.ratingKey);
+}
+/** The track to chain after `prev` in the stream, or null when the album run ends. */
+function gaplessNext(prev: Metadata): Metadata | null {
+	if (player.repeat === 'one') return null;
+	const i = queueIndexOf(prev);
+	const nxt = i >= 0 ? player.queue[i + 1] : undefined;
+	return gaplessPair(prev, nxt) ? nxt! : null;
+}
+function gaplessUrl(t: Metadata): string | null {
+	return transcodeUrl(t, bitrateFor() ?? 320, session.streamBase ?? undefined);
+}
+function stopStream() {
+	stream?.destroy();
+	stream = null;
+}
+
 /** Where a long track should start: its Plex resume point, unless (nearly) finished or barely begun. */
 function resumePointMs(t: Metadata | null | undefined): number {
 	const dur = t?.duration ?? 0;
@@ -119,11 +163,13 @@ function el(): HTMLAudioElement | null {
 		document.body.appendChild(a);
 	}
 	a.addEventListener('timeupdate', () => {
-		player.currentTime = a.currentTime;
+		if (stream) onStreamTime(a.currentTime);
+		else player.currentTime = a.currentTime;
 		persistSoon();
 		maybeReportTimeline();
 	});
 	a.addEventListener('durationchange', () => {
+		if (stream) return; // the stream spans several tracks; per-track duration comes from Plex
 		// A non-finite duration (chunked transcode) keeps the Plex duration that load() published.
 		if (Number.isFinite(a.duration) && a.duration > 0) player.duration = a.duration;
 		syncMediaPosition();
@@ -300,11 +346,73 @@ function active(): HTMLAudioElement | null {
 }
 /** No-op now — single-element playback has nothing to prefetch. Kept so queue-mutation callers and
  *  the quality-change hook stay simple. */
-function reprime() {}
+function reprime() {
+	// The queue changed: re-plan what the gapless stream chains after the current track.
+	const t = currentTrack();
+	if (stream && t) stream.replanAfter(t);
+}
 
-function load(track: Metadata, autoplay: boolean) {
+/** Gapless stream time → the current track + position. Crossing into the next segment advances the
+ *  queue without touching the element: only title, artwork and timeline change. */
+function onStreamTime(abs: number) {
+	const hit = stream?.segmentAt(abs);
+	if (!hit) return;
+	const i = queueIndexOf(hit.seg.track);
+	if (i >= 0 && i !== player.index) {
+		const prevTrack = currentTrack();
+		if (prevTrack?.ratingKey) {
+			// The previous track finished: final timeline report so Plex counts the play.
+			const d = prevTrack.duration ?? 0;
+			void reportTimeline(prevTrack.ratingKey, 'stopped', d, d);
+		}
+		player.index = i;
+		logEvent(`gapless → "${hit.seg.track.title}"${vis()}`);
+		setNowPlayingMetadata(hit.seg.track);
+		persist();
+		maybeAutoExtend();
+	}
+	player.currentTime = Math.max(0, abs - hit.seg.start);
+	player.duration = hit.seg.end - hit.seg.start;
+	if (i !== player.index) syncMediaPosition();
+}
+
+/** Start the current track as a gapless stream (when its album continues in the queue). */
+function startStream(a: HTMLAudioElement, track: Metadata, offsetS: number): boolean {
+	if (!gapless.on || !gaplessSupported()) return false;
+	if (track.parentRatingKey && track.parentRatingKey === gaplessBlocked) return false;
+	if (!gaplessNext(track) || !gaplessPair(track, track)) return false;
+	const s = new GaplessStream(a, gaplessUrl, gaplessNext, () => {
+		// Stream failed (transcoder, CORS, quota): continue this album the normal way from here.
+		if (stream !== s) return;
+		const t = currentTrack();
+		const at = player.currentTime;
+		const wasPlaying = player.playing;
+		stream = null;
+		gaplessBlocked = t?.parentRatingKey ?? '';
+		if (t) load(t, wasPlaying, at);
+	});
+	stream = s;
+	candidates = [];
+	candidateIdx = 0;
+	s.start(track, offsetS);
+	logEvent(`gapless stream: "${track.title}" + rest of the album`);
+	return true;
+}
+
+function load(track: Metadata, autoplay: boolean, startAtS?: number) {
 	const a = el();
 	if (!a) return;
+	stopStream();
+	const startAt = startAtS ?? resumePointMs(track) / 1000;
+	if (startStream(a, track, startAt)) {
+		loadAt = Date.now();
+		player.currentTime = startAt;
+		player.duration = (track.duration ?? 0) / 1000;
+		setNowPlayingMetadata(track);
+		syncMediaPosition();
+		if (autoplay) play();
+		return;
+	}
 	candidates = playbackCandidates(track);
 	candidateIdx = 0;
 	if (!candidates.length) {
@@ -315,11 +423,21 @@ function load(track: Metadata, autoplay: boolean) {
 	a.src = candidates[0];
 	a.load();
 	loadAt = Date.now();
-	resumeLongTrack(a, track);
+	if (startAtS !== undefined) {
+		// An explicit start (gapless fallback, far seek): jump there once the media is ready.
+		if (startAtS > 0)
+			a.addEventListener(
+				'loadedmetadata',
+				() => {
+					a.currentTime = startAtS;
+				},
+				{ once: true }
+			);
+	} else resumeLongTrack(a, track);
 	// Publish the new track's timeline now, from Plex's duration, before anything plays. The position
 	// must never be unset while two elements are playing: Chromium ≤150 answers that by wiping the
 	// title and artwork from the system's media controls.
-	player.currentTime = resumePointMs(track) / 1000;
+	player.currentTime = startAt;
 	player.duration = (track.duration ?? 0) / 1000;
 	setNowPlayingMetadata(track);
 	syncMediaPosition();
@@ -359,6 +477,15 @@ function onError() {
 	const a = active();
 	const track = currentTrack();
 	if (!a || !track) return;
+	if (stream) {
+		// The MediaSource stream broke: replay this track the normal way from where we were.
+		logEvent(`gapless stream error for "${track.title}" — normal playback`);
+		const at = player.currentTime;
+		gaplessBlocked = track.parentRatingKey ?? '';
+		stopStream();
+		load(track, player.playing, at);
+		return;
+	}
 	// An error on a paused (or just-restored) track must not start the music or walk the queue.
 	const go = player.playing;
 	// A failed LAN URL means we left home (or the LAN path broke): stop preferring it for later tracks.
@@ -379,6 +506,18 @@ function onError() {
 }
 
 function goTo(i: number) {
+	// Next within a gapless album whose start is already buffered: just move the playhead.
+	const target = player.queue[i];
+	const a = active();
+	if (stream && a && target) {
+		const seg = stream.segments.find((s) => s.track.ratingKey === target.ratingKey);
+		if (seg && stream.buffered(seg.start + 0.05)) {
+			a.currentTime = seg.start + 0.01;
+			onStreamTime(a.currentTime);
+			if (!player.playing) play();
+			return;
+		}
+	}
 	player.index = i;
 	const t = currentTrack();
 	if (t) load(t, true);
@@ -575,6 +714,19 @@ export function prev(): void {
 
 export function seek(t: number): void {
 	const a = el();
+	if (a && stream) {
+		const cur = currentTrack();
+		const seg = cur && stream.segments.find((s) => s.track.ratingKey === cur.ratingKey);
+		if (seg && stream.buffered(seg.start + t)) {
+			a.currentTime = seg.start + t;
+			player.currentTime = t;
+		} else if (cur) {
+			load(cur, player.playing, t); // not buffered (evicted or far ahead): restart the stream there
+		}
+		reportNow(player.playing ? 'playing' : 'paused');
+		syncMediaPosition();
+		return;
+	}
 	if (a) {
 		a.currentTime = t;
 		player.currentTime = t;
@@ -658,6 +810,7 @@ export function removeAt(i: number): void {
 		base = [];
 		player.index = -1;
 		const a = active();
+		stopStream();
 		if (a) {
 			a.pause();
 			a.removeAttribute('src');
@@ -878,6 +1031,7 @@ export function restore(): void {
 	player.duration = (t?.duration ?? 0) / 1000;
 	const a = el();
 	if (t && a) {
+		stopStream();
 		candidates = playbackCandidates(t);
 		candidateIdx = 0;
 		if (candidates.length) {

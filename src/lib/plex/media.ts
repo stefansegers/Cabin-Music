@@ -4,7 +4,7 @@
 
 import { plexFetch, PlexError, type PlexFetchOpts } from './client';
 import { getClientId } from './identifiers';
-import { PLEX_IMG_PATH, GATE_401_BODY } from './config';
+import { PLEX_IMG_PATH, GATE_401_BODY, PLEX_PRODUCT, PLEX_VERSION } from './config';
 import { session } from '$lib/stores/session.svelte';
 import { requireGate } from '$lib/stores/gate.svelte';
 import { bitrateFor } from '$lib/stores/quality.svelte';
@@ -108,6 +108,11 @@ export function transcodeUrl(
 		directPlay: '0',
 		directStream: bitrate ? '0' : '1', // capped tier → force re-encode; fallback → allow remux
 		audioCodec: 'mp3',
+		// Without product + platform, Plex answers the transcoder with 400 Bad Request (it picks a
+		// client profile from them). 'Chrome' matches the car's browser; verified against the server.
+		'X-Plex-Product': PLEX_PRODUCT,
+		'X-Plex-Version': PLEX_VERSION,
+		'X-Plex-Platform': 'Chrome',
 		'X-Plex-Client-Identifier': getClientId(),
 		'X-Plex-Token': active.accessToken
 	});

@@ -16,6 +16,8 @@
 		setKeepAlive,
 		autoplay,
 		setAutoplay,
+		gapless,
+		setGapless,
 		type KeepAlive
 	} from '$lib/stores/player.svelte';
 	import { session } from '$lib/stores/session.svelte';
@@ -114,6 +116,19 @@
 		<div class="seg">
 			<button class="seg-btn" class:sel={autoplay.on} onclick={() => setAutoplay(true)}>On</button>
 			<button class="seg-btn" class:sel={!autoplay.on} onclick={() => setAutoplay(false)}>Off</button>
+		</div>
+	</div>
+
+	<div class="group">
+		<h2>Gapless albums</h2>
+		<p class="dim">
+			Tracks of the same album — DJ mixes split into tracks, live albums — flow into each other
+			without a pause. They stream as 320k MP3 (or your quality setting) while this is on. If the
+			car's media controls misbehave, turn it off.
+		</p>
+		<div class="seg">
+			<button class="seg-btn" class:sel={gapless.on} onclick={() => setGapless(true)}>On</button>
+			<button class="seg-btn" class:sel={!gapless.on} onclick={() => setGapless(false)}>Off</button>
 		</div>
 	</div>
 
