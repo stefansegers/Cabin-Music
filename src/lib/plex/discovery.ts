@@ -7,6 +7,7 @@ import { TokenStore, ConnStore, AccountStore } from './storage';
 import type { ActiveConnection, ConnType, Identity, PlexConnection, PlexDevice, PlexAccount } from './types';
 import { session, setStatus, fail, reset } from '$lib/stores/session.svelte';
 import { logEvent } from '$lib/stores/debug.svelte';
+import { findLocalStream } from './localStream';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -181,6 +182,7 @@ export async function bootSession(signal?: AbortSignal): Promise<void> {
 				session.active = cached;
 				setStatus('connected');
 				logEvent('reconnected via cached connection');
+				void findLocalStream(token); // best-effort: LAN audio at home
 				return;
 			}
 			logEvent('cached connection stale → full discovery');
@@ -194,6 +196,7 @@ export async function bootSession(signal?: AbortSignal): Promise<void> {
 				ConnStore.set(conn);
 				setStatus('connected');
 				logEvent(`connected: ${conn.serverName} (${conn.connType})`);
+				void findLocalStream(token); // best-effort: LAN audio at home
 			} else if (session.candidates.length === 0) {
 				fail(
 					'discovering',

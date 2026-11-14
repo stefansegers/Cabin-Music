@@ -82,6 +82,13 @@
 		<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 1 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78z" />
 	{:else if name === 'heart-filled'}
 		<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 1 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78z" fill="currentColor" stroke="none" />
+	{:else if name === 'folder'}
+		<path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+	{:else if name === 'genre'}
+		<path d="M3 12V4a1 1 0 0 1 1-1h8l9 9-9 9z" />
+		<circle cx="7.5" cy="7.5" r="1.5" fill="currentColor" stroke="none" />
+	{:else if name === 'chevron-right'}
+		<path d="M9 5l7 7-7 7" />
 	{:else if name === 'check'}
 		<polyline points="20 6 9 17 4 12" />
 	{/if}

@@ -81,12 +81,12 @@ export function artCandidates(thumb: string | null | undefined, w: number, h: nu
 }
 
 /** Direct-play stream URL for a track's first media part (token as query param for `<audio>`). */
-export function streamUrl(track: Metadata | null | undefined): string | null {
+export function streamUrl(track: Metadata | null | undefined, base?: string): string | null {
 	const active = session.active;
 	const partKey = track?.Media?.[0]?.Part?.[0]?.key;
 	if (!active || !partKey) return null;
 	const sep = partKey.includes('?') ? '&' : '?';
-	return `${active.baseUri}${partKey}${sep}X-Plex-Token=${encodeURIComponent(active.accessToken)}`;
+	return `${base ?? active.baseUri}${partKey}${sep}X-Plex-Token=${encodeURIComponent(active.accessToken)}`;
 }
 
 /**
@@ -95,7 +95,11 @@ export function streamUrl(track: Metadata | null | undefined): string | null {
  * (kbps) to cap quality (forces re-encode); omit it for the codec-compatibility fallback (remux only
  * when needed). Best-effort.
  */
-export function transcodeUrl(track: Metadata | null | undefined, bitrate?: number): string | null {
+export function transcodeUrl(
+	track: Metadata | null | undefined,
+	bitrate?: number,
+	base?: string
+): string | null {
 	const active = session.active;
 	if (!active || !track?.ratingKey) return null;
 	const params = new URLSearchParams({
@@ -108,7 +112,7 @@ export function transcodeUrl(track: Metadata | null | undefined, bitrate?: numbe
 		'X-Plex-Token': active.accessToken
 	});
 	if (bitrate) params.set('audioBitrate', String(bitrate));
-	return `${active.baseUri}/music/:/transcode/universal/start.mp3?${params.toString()}`;
+	return `${base ?? active.baseUri}/music/:/transcode/universal/start.mp3?${params.toString()}`;
 }
 
 /**
@@ -119,9 +123,15 @@ export function transcodeUrl(track: Metadata | null | undefined, bitrate?: numbe
  */
 export function playbackCandidates(track: Metadata | null | undefined): string[] {
 	const kbps = bitrateFor();
-	const direct = streamUrl(track);
-	if (kbps == null) {
-		return [direct, transcodeUrl(track)].filter((u): u is string => !!u);
+	// LAN address first when the browser can reach it (home), then the active (remote) connection.
+	const bases = [session.streamBase, session.active?.baseUri].filter(
+		(b, i, all): b is string => !!b && all.indexOf(b) === i
+	);
+	const urls: (string | null)[] = [];
+	for (const base of bases) {
+		const direct = streamUrl(track, base);
+		if (kbps == null) urls.push(direct, transcodeUrl(track, undefined, base));
+		else urls.push(transcodeUrl(track, kbps, base), direct);
 	}
-	return [transcodeUrl(track, kbps), direct].filter((u): u is string => !!u);
+	return urls.filter((u): u is string => !!u);
 }

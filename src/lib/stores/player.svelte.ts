@@ -4,6 +4,7 @@
 
 import type { Metadata } from '$lib/plex/types';
 import { playbackCandidates, artUrl } from '$lib/plex/media';
+import { dropLocalStream } from '$lib/plex/localStream';
 import {
 	getArtistStationKey,
 	resolveMixStationKey,
@@ -310,6 +311,8 @@ function onError() {
 	if (!a || !track) return;
 	// An error on a paused (or just-restored) track must not start the music or walk the queue.
 	const go = player.playing;
+	// A failed LAN URL means we left home (or the LAN path broke): stop preferring it for later tracks.
+	dropLocalStream(candidates[candidateIdx] ?? '');
 	// Walk the fallback chain (e.g. transcode after a failed direct play, or vice-versa).
 	candidateIdx++;
 	if (candidateIdx < candidates.length) {

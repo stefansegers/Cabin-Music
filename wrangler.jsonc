@@ -1,7 +1,10 @@
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
-	"name": "cabin-svelte",
+	"name": "cabin-music",
+	"account_id": "ab0e4510fa58c0dfd2343d59411b4483",
 	"compatibility_date": "2026-06-03",
+	"workers_dev": false,
+	"routes": [{ "pattern": "teslaplex.stefansegers.nl", "custom_domain": true }],
 	// Worker runs in front of the static assets: it proxies /plex (Plex JSON, with CORS headers)
 	// and serves the SPA for everything else via the ASSETS binding.
 	//

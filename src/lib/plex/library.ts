@@ -234,3 +234,103 @@ export async function search(
 	});
 	return mapHubs(container(data));
 }
+
+/** A folder listing entry: a subfolder (only `key` + `title`) or a playable track. */
+export interface FolderEntry {
+	key: string;
+	title: string;
+}
+export interface FolderListing {
+	title: string;
+	folders: FolderEntry[];
+	tracks: Metadata[];
+}
+
+/** Browse a music section by its on-disk folders (Plex "By Folder"). Pass a subfolder's `key`
+ *  (e.g. `/library/sections/20/folder?parent=123`) to descend; omit it for the section root. */
+export async function getFolder(
+	sectionId: string,
+	folderKey?: string,
+	signal?: AbortSignal
+): Promise<FolderListing> {
+	const path = folderKey ?? `/library/sections/${sectionId}/folder`;
+	// Only allow folder keys of this section — the key comes from the URL.
+	if (!path.startsWith(`/library/sections/${sectionId}/folder`)) {
+		throw new Error('Invalid folder');
+	}
+	const data = await serverFetch<any>(path, { signal });
+	const c = container(data);
+	// Plex returns subfolders and tracks mixed in Metadata[] (subfolders have no `type`); older
+	// servers may put folders under Directory[] — accept both.
+	const raw: any[] = [
+		...(Array.isArray(c.Directory) ? c.Directory : []),
+		...(Array.isArray(c.Metadata) ? c.Metadata : [])
+	];
+	const folders: FolderEntry[] = [];
+	const tracks: Metadata[] = [];
+	for (const m of raw) {
+		if (m.type === 'track') tracks.push(m as Metadata);
+		else if (!m.type && typeof m.key === 'string') folders.push({ key: m.key, title: m.title ?? '' });
+	}
+	return { title: c.title2 ?? '', folders, tracks };
+}
+
+/** A genre tag in a section. `key` is the tag id used for filtering. */
+export interface Genre {
+	key: string;
+	title: string;
+}
+
+/** All album genres in a section, alphabetical. */
+export async function getGenres(sectionId: string, signal?: AbortSignal): Promise<Genre[]> {
+	const data = await serverFetch<any>(`/library/sections/${sectionId}/genre`, {
+		query: { type: TYPE.album },
+		signal
+	});
+	const dirs: any[] = container(data).Directory ?? [];
+	return dirs
+		.map((d) => ({ key: String(d.key), title: String(d.title ?? '') }))
+		.filter((g) => g.title)
+		.sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
+}
+
+/** Paginated albums tagged with a genre. */
+export async function getGenreAlbums(
+	sectionId: string,
+	genreId: string,
+	opts: { start?: number; size?: number; sort?: string } = {},
+	signal?: AbortSignal
+): Promise<PageResult> {
+	const { start = 0, size = 60, sort = 'titleSort:asc' } = opts;
+	const data = await serverFetch<any>(`/library/sections/${sectionId}/all`, {
+		query: {
+			type: TYPE.album,
+			genre: genreId,
+			sort,
+			'X-Plex-Container-Start': start,
+			'X-Plex-Container-Size': size
+		},
+		signal
+	});
+	return page(container(data), start);
+}
+
+/** A random selection of tracks from albums in a genre — for "Shuffle genre". */
+export async function getGenreTracksShuffled(
+	sectionId: string,
+	genreId: string,
+	size = 200,
+	signal?: AbortSignal
+): Promise<Metadata[]> {
+	const data = await serverFetch<any>(`/library/sections/${sectionId}/all`, {
+		query: {
+			type: TYPE.track,
+			'album.genre': genreId,
+			sort: 'random',
+			'X-Plex-Container-Start': 0,
+			'X-Plex-Container-Size': size
+		},
+		signal
+	});
+	return metas(container(data));
+}

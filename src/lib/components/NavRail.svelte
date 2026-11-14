@@ -7,6 +7,8 @@
 		{ href: '/artists', label: 'Artists', icon: 'artist' },
 		{ href: '/albums', label: 'Albums', icon: 'album' },
 		{ href: '/playlists', label: 'Playlists', icon: 'playlist' },
+		{ href: '/folders', label: 'Folders', icon: 'folder' },
+		{ href: '/genres', label: 'Genres', icon: 'genre' },
 		{ href: '/search', label: 'Search', icon: 'search' },
 		{ href: '/settings', label: 'Settings', icon: 'settings' }
 	];

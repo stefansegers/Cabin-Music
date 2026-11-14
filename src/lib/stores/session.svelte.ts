@@ -28,6 +28,8 @@ export const session = $state({
 	token: null as string | null, // account authToken
 	account: null as PlexAccount | null,
 	active: null as ActiveConnection | null,
+	/** LAN base URI the browser can reach directly, used for audio only (see localStream.ts). */
+	streamBase: null as string | null,
 	candidates: [] as ServerCandidate[], // reserved for a Phase 2 multi-server picker
 	error: null as SessionError | null
 });
@@ -47,6 +49,7 @@ export function reset(): void {
 	session.token = null;
 	session.account = null;
 	session.active = null;
+	session.streamBase = null;
 	session.candidates = [];
 	session.error = null;
 	session.status = 'unauthenticated';
