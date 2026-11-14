@@ -4,11 +4,15 @@
 // swapping elements at a track boundary greys out its controls (see the history of player.svelte.ts).
 // Instead the single element plays a MediaSource stream into which consecutive album tracks are
 // appended back to back:
-//  - each track is fetched as an MP3 from Plex's transcoder (raw FLAC can't go into MediaSource);
-//  - MP3 encoders add ~1105 samples of silence up front and pad the end. Every track is placed with
-//    timestampOffset = start − delay and clipped with appendWindow [start, start + duration], so the
-//    silence is cut and track N+1 starts on the exact sample track N ends (verified: one contiguous
-//    buffered range across the boundary);
+//  - FLAC albums play the ORIGINAL files: MediaSource takes no raw .flac, so each file is repackaged
+//    into fragmented MP4 in the browser (flacmp4.ts — frames copied byte for byte, lossless). FLAC
+//    has no encoder delay/padding and STREAMINFO holds the exact sample count, so every track is
+//    placed at exactly start = previous end. A seek far into a track fetches from a byte offset
+//    (HTTP Range) and re-syncs on a frame, instead of downloading from the start;
+//  - other formats come as MP3 from Plex's transcoder. MP3 encoders add ~1105 samples of silence up
+//    front and pad the end, so those tracks are placed with timestampOffset = start − delay and
+//    clipped with appendWindow [start, start + duration] (verified: one contiguous buffered range
+//    across the boundary);
 //  - Chrome caps an audio SourceBuffer at ~12 MB, so tracks are appended in chunks just ahead of the
 //    playhead and played audio is evicted behind it.
 // The player keeps the timeline per track: it asks `segmentAt(currentTime)` and switches title/art
@@ -16,6 +20,10 @@
 
 import type { Metadata } from './types';
 import { logEvent } from '$lib/stores/debug.svelte';
+import { FlacToMp4, initSegment, parseFlacHeader, type StreamInfo } from './flacmp4';
+
+export type GaplessKind = 'flac' | 'mp3';
+const MIME: Record<GaplessKind, string> = { flac: 'audio/mp4; codecs="flac"', mp3: 'audio/mpeg' };
 
 const MP3_DELAY_S = 1105 / 44100; // LAME/ffmpeg encoder delay + decoder delay at 44.1 kHz
 const CHUNK = 512 * 1024; // bytes per appendBuffer
@@ -38,6 +46,15 @@ interface Pending {
 	complete: boolean; // download finished
 	fetching: Promise<void> | null;
 	failed: boolean;
+	exact: boolean; // seg.end is final (FLAC: from STREAMINFO) — the next track may be placed after it
+	seekTo: number; // FLAC: start this far into the track (seconds) via an HTTP Range request
+}
+
+function concat(a: Uint8Array, b: Uint8Array): Uint8Array {
+	const m = new Uint8Array(a.length + b.length);
+	m.set(a);
+	m.set(b, a.length);
+	return m;
 }
 
 // Plex runs ONE transcode per client at a time: a second start kills or refuses the first ("Failed
@@ -49,8 +66,8 @@ function oneAtATime<T>(job: () => Promise<T>): Promise<T> {
 	return run;
 }
 
-export function gaplessSupported(): boolean {
-	return typeof MediaSource !== 'undefined' && MediaSource.isTypeSupported('audio/mpeg');
+export function gaplessSupported(kind: GaplessKind): boolean {
+	return typeof MediaSource !== 'undefined' && MediaSource.isTypeSupported(MIME[kind]);
 }
 
 export class GaplessStream {
@@ -67,6 +84,7 @@ export class GaplessStream {
 
 	constructor(
 		private a: HTMLAudioElement,
+		private kind: GaplessKind,
 		private urlFor: (t: Metadata) => string | null,
 		/** Next track to chain after `prev`, or null when the album run ends. */
 		private nextAfter: (prev: Metadata) => Metadata | null,
@@ -82,12 +100,12 @@ export class GaplessStream {
 			() => {
 				if (this.closed) return;
 				try {
-					this.sb = this.ms.addSourceBuffer('audio/mpeg');
+					this.sb = this.ms.addSourceBuffer(MIME[this.kind]);
 				} catch (e) {
 					this.fail(`addSourceBuffer: ${(e as Error)?.message ?? e}`);
 					return;
 				}
-				this.enqueue(first);
+				this.enqueue(first, offsetS);
 				// Start further in: put the playhead there now. The pump buffers relative to the playhead,
 				// so it keeps appending (and evicting behind) until the target is reached; the element
 				// starts playing as soon as data at the target arrives.
@@ -152,12 +170,118 @@ export class GaplessStream {
 
 	// --- internals ---
 
-	private enqueue(track: Metadata) {
+	private enqueue(track: Metadata, seekTo = 0) {
 		const last = this.segments[this.segments.length - 1];
 		const start = last ? last.end : 0;
 		const seg = { track, start, end: start + (track.duration ?? 0) / 1000 };
 		this.segments.push(seg);
-		this.queue.push({ seg, parts: [], next: 0, placed: false, complete: false, fetching: null, failed: false });
+		this.queue.push({
+			seg,
+			parts: [],
+			next: 0,
+			placed: false,
+			complete: false,
+			fetching: null,
+			failed: false,
+			exact: this.kind === 'mp3', // MP3: Plex's duration is what we clip to
+			seekTo: this.kind === 'flac' ? seekTo : 0
+		});
+	}
+
+	/** FLAC: the exact track length comes from STREAMINFO (Plex's duration is rounded to ms). */
+	private setExact(p: Pending, info: StreamInfo) {
+		if (info.totalSamples > 0) p.seg.end = p.seg.start + info.totalSamples / info.sampleRate;
+		p.exact = true;
+	}
+
+	/** FLAC: read STREAMINFO and where the audio starts, with small Range requests. */
+	private async readFlacHead(url: string): Promise<{ info: StreamInfo; audioStart: number }> {
+		let buf: Uint8Array = new Uint8Array(0);
+		let want = 16 * 1024;
+		for (let k = 0; k < 8; k++) {
+			const r = await fetch(url, {
+				headers: { Range: `bytes=${buf.length}-${want - 1}` },
+				signal: this.abort.signal,
+				cache: 'no-store'
+			});
+			if (!r.ok) throw new Error(`HTTP ${r.status}`);
+			const chunk = new Uint8Array(await r.arrayBuffer());
+			buf = r.status === 206 ? concat(buf, chunk) : chunk; // 200: the server sent the whole file
+			const res = parseFlacHeader(buf);
+			if (!res) throw new Error('not a FLAC file');
+			if ('info' in res) return res;
+			want = Math.max(res.need, buf.length) + 16 * 1024;
+		}
+		throw new Error('FLAC header too large');
+	}
+
+	/** FLAC: download the original file (from a byte offset when seeking) and repackage it as fMP4
+	 *  segments as the bytes arrive. */
+	private fetchFlac(p: Pending, url: string) {
+		p.fetching = (async () => {
+			for (let attempt = 0; attempt < 3 && !p.complete && !this.closed; attempt++) {
+				try {
+					let remux: FlacToMp4 | null = null;
+					let from = 0;
+					const size = p.seg.track.Media?.[0]?.Part?.[0]?.size ?? 0;
+					if (p.seekTo > 2 && size > 0) {
+						const { info, audioStart } = await this.readFlacHead(url);
+						this.setExact(p, info);
+						const frac = Math.max(0, (p.seekTo - 3) / (p.seg.end - p.seg.start));
+						from = Math.min(size - 1, audioStart + Math.floor(frac * (size - audioStart)));
+						remux = new FlacToMp4(info, true);
+						p.parts.push(initSegment(info));
+					}
+					const r = await fetch(url, {
+						headers: from ? { Range: `bytes=${from}-` } : {},
+						signal: this.abort.signal,
+						cache: 'no-store'
+					});
+					if (!r.ok || !r.body) throw new Error(`HTTP ${r.status}`);
+					if (from && r.status !== 206) {
+						// Range ignored: parse from the top of the file instead.
+						remux = null;
+						p.parts = [];
+					}
+					const reader = r.body.getReader();
+					let head: Uint8Array = new Uint8Array(0);
+					for (;;) {
+						const { value, done } = await reader.read();
+						if (value?.length) {
+							if (remux) {
+								const seg = remux.push(value);
+								if (seg) p.parts.push(seg);
+							} else {
+								head = concat(head, value);
+								const res = parseFlacHeader(head);
+								if (res === null) throw new Error('not a FLAC file');
+								if ('info' in res) {
+									this.setExact(p, res.info);
+									p.parts.push(initSegment(res.info));
+									remux = new FlacToMp4(res.info);
+									const seg = remux.push(head.subarray(res.audioStart));
+									if (seg) p.parts.push(seg);
+									head = new Uint8Array(0);
+								}
+							}
+						}
+						if (done) break;
+					}
+					if (!remux) throw new Error('no FLAC header');
+					const last = remux.push(EMPTY, true);
+					if (last) p.parts.push(last);
+					p.complete = true;
+				} catch (e) {
+					if (this.closed) break;
+					logEvent(`gapless FLAC "${p.seg.track.title}" failed: ${(e as Error)?.message ?? e}`);
+					if (p.next > 0) break; // already appended: can't restart cleanly
+					p.parts = [];
+					await new Promise((res) => setTimeout(res, 600 * (attempt + 1)));
+				}
+			}
+			if (!p.complete && !this.closed) p.failed = true;
+			p.fetching = null;
+		})();
 	}
 
 	/** Stream a track's MP3 in; the pump appends parts while the rest is still arriving, so playback
@@ -167,6 +291,10 @@ export class GaplessStream {
 		const url = this.urlFor(p.seg.track);
 		if (!url) {
 			p.failed = true;
+			return;
+		}
+		if (this.kind === 'flac') {
+			this.fetchFlac(p, url);
 			return;
 		}
 		p.fetching = (async () => {
@@ -234,7 +362,8 @@ export class GaplessStream {
 			const now = this.a.currentTime;
 			// Plan the next track of the album once the last planned one is being appended.
 			const last = this.segments[this.segments.length - 1];
-			if (last && !this.ended && this.queue.length <= 1) {
+			// (FLAC: only once the current track's exact length is known, so the next starts on its last sample.)
+			if (last && !this.ended && this.queue.length <= 1 && (!this.queue[0] || this.queue[0].exact)) {
 				const nxt = this.nextAfter(last.track);
 				if (nxt) this.enqueue(nxt);
 				else if (!this.queue.length) {
@@ -273,7 +402,7 @@ export class GaplessStream {
 					// Place this track: cut the encoder delay and the end padding exactly.
 					sb.appendWindowStart = 0;
 					sb.appendWindowEnd = Infinity;
-					sb.timestampOffset = p.seg.start - MP3_DELAY_S;
+					sb.timestampOffset = p.seg.start - (this.kind === 'mp3' ? MP3_DELAY_S : 0);
 					sb.appendWindowEnd = p.seg.end;
 					sb.appendWindowStart = p.seg.start;
 					p.placed = true;

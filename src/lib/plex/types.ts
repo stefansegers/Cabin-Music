@@ -95,7 +95,7 @@ export interface Metadata {
 	playQueueItemID?: number; // present on items returned from /playQueues
 	librarySectionID?: number | string; // section an item belongs to (on full metadata)
 	Genre?: { id?: number | string; tag: string }[]; // genre tags (full metadata); the first one counts
-	Media?: { Part?: { key?: string }[] }[];
+	Media?: { container?: string; audioCodec?: string; Part?: { key?: string; size?: number }[] }[];
 }
 
 /** A home/search hub — a titled row of items. */

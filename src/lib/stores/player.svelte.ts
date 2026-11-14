@@ -3,8 +3,8 @@
 // radio (server play queue) is layered on in playback.ts (3b).
 
 import type { Metadata } from '$lib/plex/types';
-import { playbackCandidates, artUrl, transcodeUrl } from '$lib/plex/media';
-import { GaplessStream, gaplessSupported } from '$lib/plex/gapless';
+import { playbackCandidates, artUrl, transcodeUrl, streamUrl } from '$lib/plex/media';
+import { GaplessStream, gaplessSupported, type GaplessKind } from '$lib/plex/gapless';
 import { bitrateFor } from '$lib/stores/quality.svelte';
 import { session } from '$lib/stores/session.svelte';
 import { dropLocalStream } from '$lib/plex/localStream';
@@ -58,8 +58,20 @@ const GAPLESS_MAX_MS = 20 * 60 * 1000;
 let stream: GaplessStream | null = null;
 let gaplessBlocked = ''; // album (parentRatingKey) where the stream failed — play it the normal way
 
+/** FLAC files can stream as the original (repackaged losslessly); everything else via MP3. A capped
+ *  quality setting means the user wants MP3 to save data, so that wins. */
+function isFlac(t: Metadata): boolean {
+	const m = t.Media?.[0];
+	return (m?.container ?? m?.audioCodec ?? '').toLowerCase() === 'flac';
+}
+function gaplessKind(t: Metadata): GaplessKind {
+	return isFlac(t) && bitrateFor() == null && gaplessSupported('flac') ? 'flac' : 'mp3';
+}
+let streamKind: GaplessKind = 'mp3';
+
 function gaplessPair(a: Metadata | null | undefined, b: Metadata | null | undefined): boolean {
 	if (!a || !b || !a.parentRatingKey || a.parentRatingKey !== b.parentRatingKey) return false;
+	if (isFlac(a) !== isFlac(b)) return false; // one stream = one format
 	return [a, b].every((t) => {
 		const d = t.duration ?? 0;
 		return d >= GAPLESS_MIN_MS && d <= GAPLESS_MAX_MS;
@@ -79,7 +91,8 @@ function gaplessNext(prev: Metadata): Metadata | null {
 	return gaplessPair(prev, nxt) ? nxt! : null;
 }
 function gaplessUrl(t: Metadata): string | null {
-	return transcodeUrl(t, bitrateFor() ?? 320, session.streamBase ?? undefined);
+	const base = session.streamBase ?? undefined;
+	return streamKind === 'flac' ? streamUrl(t, base) : transcodeUrl(t, bitrateFor() ?? 320, base);
 }
 function stopStream() {
 	stream?.destroy();
@@ -378,10 +391,12 @@ function onStreamTime(abs: number) {
 
 /** Start the current track as a gapless stream (when its album continues in the queue). */
 function startStream(a: HTMLAudioElement, track: Metadata, offsetS: number): boolean {
-	if (!gapless.on || !gaplessSupported()) return false;
+	const kind = gaplessKind(track);
+	if (!gapless.on || !gaplessSupported(kind)) return false;
 	if (track.parentRatingKey && track.parentRatingKey === gaplessBlocked) return false;
 	if (!gaplessNext(track) || !gaplessPair(track, track)) return false;
-	const s = new GaplessStream(a, gaplessUrl, gaplessNext, () => {
+	streamKind = kind;
+	const s = new GaplessStream(a, kind, gaplessUrl, gaplessNext, () => {
 		// Stream failed (transcoder, CORS, quota): continue this album the normal way from here.
 		if (stream !== s) return;
 		const t = currentTrack();
@@ -395,7 +410,7 @@ function startStream(a: HTMLAudioElement, track: Metadata, offsetS: number): boo
 	candidates = [];
 	candidateIdx = 0;
 	s.start(track, offsetS);
-	logEvent(`gapless stream: "${track.title}" + rest of the album`);
+	logEvent(`gapless stream (${kind === 'flac' ? 'original FLAC' : 'MP3'}): "${track.title}" + rest of the album`);
 	return true;
 }
 
