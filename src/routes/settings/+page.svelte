@@ -123,8 +123,8 @@
 		<h2>Gapless albums</h2>
 		<p class="dim">
 			Tracks of the same album — DJ mixes split into tracks, live albums — flow into each other
-			without a pause. They stream as 320k MP3 (or your quality setting) while this is on. If the
-			car's media controls misbehave, turn it off.
+			without a pause. FLAC albums play the original files, lossless; other formats stream as MP3.
+			If the car's media controls misbehave, turn it off.
 		</p>
 		<div class="seg">
 			<button class="seg-btn" class:sel={gapless.on} onclick={() => setGapless(true)}>On</button>
