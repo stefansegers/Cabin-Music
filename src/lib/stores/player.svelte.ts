@@ -937,12 +937,16 @@ export async function playArtistRadio(artistKey: string): Promise<void> {
 	try {
 		const stationKey = await getArtistStationKey(artistKey);
 		if (!stationKey) {
-			logEvent(`no radio station for artist ${artistKey}`);
+			logEvent(`no radio station for artist ${artistKey} → shuffling the artist instead`);
+			await shuffleArtist(artistKey);
 			return;
 		}
 		const q = await createPlayQueue(stationUri(stationKey), { continuous: true });
 		if (!q.items.length) {
-			logEvent('artist radio: empty queue');
+			// Radio needs Plex sonic analysis; without it the station is empty. Shuffle the artist's
+			// catalogue instead (autoplay carries on after it), so a tap always plays something.
+			logEvent('artist radio: empty queue → shuffling the artist instead');
+			await shuffleArtist(artistKey);
 			return;
 		}
 		playList(q.items, 0, { radio: { playQueueID: q.playQueueID, lastItemID: q.lastItemID, artistKey } });

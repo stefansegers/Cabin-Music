@@ -38,23 +38,24 @@
 		return () => ctrl.abort();
 	});
 
-	// Classify a hub by identifier OR title OR type — naming varies by server version/locale.
+	// Classify a hub. Plex's hubIdentifier (e.g. `music.mixes.25`, `music.recent.added.19`) is the
+	// reliable signal; titles are only a fallback. Matching "mix" in a TITLE misfires on a library
+	// that is itself called "Mixes" ("Recently Added in Mixes" is not "Mixes for you").
 	function kindOf(h: Hub): Kind {
-		const s = `${h.hubIdentifier} ${h.title} ${h.type}`.toLowerCase();
-		if (s.includes('mix')) return 'mixes';
-		if (s.includes('recentlyplayed') || s.includes('recently played') || s.includes('lastplayed'))
-			return 'recentlyPlayed';
-		if (s.includes('recentlyadded') || s.includes('recently added')) return 'recentlyAdded';
-		if (
-			s.includes('onthisday') ||
-			s.includes('on this day') ||
-			s.includes('this day') ||
-			s.includes('anniversary') ||
-			s.includes('memories') ||
-			s.includes('years ago')
-		)
-			return 'onThisDay';
-		if (s.includes('playlist')) return 'playlists';
+		const id = h.hubIdentifier.toLowerCase();
+		if (/(^|\.)recent\.added(\.|$)|recentlyadded/.test(id)) return 'recentlyAdded';
+		if (/(^|\.)recent\.played(\.|$)|recentlyplayed|lastplayed/.test(id)) return 'recentlyPlayed';
+		if (/anniversary|onthisday/.test(id)) return 'onThisDay';
+		if (/(^|\.)mixes(\.|$)/.test(id)) return 'mixes';
+		if (/playlist/.test(id)) return 'playlists';
+		if (id) return 'other';
+		// No identifier (older servers): fall back to the title, most specific first.
+		const t = h.title.toLowerCase();
+		if (t.includes('recently added')) return 'recentlyAdded';
+		if (t.includes('recently played')) return 'recentlyPlayed';
+		if (t.includes('on this day') || t.includes('years ago')) return 'onThisDay';
+		if (/^mixes for you$/.test(t.trim())) return 'mixes';
+		if (t.includes('playlist')) return 'playlists';
 		return 'other';
 	}
 
