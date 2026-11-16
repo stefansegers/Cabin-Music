@@ -55,7 +55,7 @@ export function setNotMix(id: string, on: boolean): void {
 	writeJSON(NOTMIX_KEY, notMix.ids);
 }
 
-const VERSION = 2; // bump when the detection changes, so caches rebuild
+const VERSION = 3; // bump when the detection changes, so caches rebuild
 const MIN_TRACKS = 4;
 const MIN_SHARE = 0.7; // of a folder's tracks must end without silence
 const SILENCE_DB = 20; // an ending this far below the track's level counts as silence
@@ -167,9 +167,13 @@ export function buildRelease(
 ): MixRelease {
 	// Play order: disc, then track number from the tags — a double CD in one folder has two "01"s, and
 	// its file names alone mix the discs up (Mazzo Presents Manic Monday). File name when tags lack it.
+	// Disc folders (CD1/CD2) count as discs too, for files whose disc tag is missing.
 	const tagged = tracks.every((t) => (t.idx ?? 0) > 0);
+	const folder = (t: ReleaseTrack) => t.file.slice(0, t.file.lastIndexOf('/'));
 	tracks.sort((a, b) =>
-		tagged ? (a.disc || 1) - (b.disc || 1) || a.idx! - b.idx! || byName(a.file, b.file) : byName(a.file, b.file)
+		tagged
+			? (a.disc || 1) - (b.disc || 1) || byName(folder(a), folder(b)) || a.idx! - b.idx! || byName(a.file, b.file)
+			: byName(a.file, b.file)
 	);
 	const parts = id.split('/');
 	const title = cleanTitle(parts[parts.length - 1] ?? id);
