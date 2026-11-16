@@ -32,6 +32,7 @@
 	} from '$lib/stores/player.svelte';
 	import { session } from '$lib/stores/session.svelte';
 	import { toggleDebug } from '$lib/stores/debug.svelte';
+	import { mixOpts, setExcludeMixes } from '$lib/plex/mixes.svelte';
 	import { signOut } from '$lib/plex/auth';
 
 	const themes: ThemeChoice[] = ['auto', 'light', 'dark'];
@@ -184,6 +185,20 @@
 		<div class="seg">
 			<button class="seg-btn" class:sel={gapless.on} onclick={() => setGapless(true)}>On</button>
 			<button class="seg-btn" class:sel={!gapless.on} onclick={() => setGapless(false)}>Off</button>
+		</div>
+	</div>
+
+	<div class="group">
+		<h2>Mixes & live albums</h2>
+		<p class="dim">
+			Tracks from DJ mixes, megamixes and live albums run into each other, so a single one on its own
+			starts and stops mid-flow. Cabin recognises them by how their tracks end, keeps them out of
+			radio, autoplay, Daily Mixes and decades, and lists them under "Mixes & live" on Home, where
+			they play as a whole, gapless.
+		</p>
+		<div class="seg">
+			<button class="seg-btn" class:sel={mixOpts.exclude} onclick={() => setExcludeMixes(true)}>Keep out of radio</button>
+			<button class="seg-btn" class:sel={!mixOpts.exclude} onclick={() => setExcludeMixes(false)}>Mix in</button>
 		</div>
 	</div>
 

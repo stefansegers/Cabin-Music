@@ -10,6 +10,7 @@ import { session } from '$lib/stores/session.svelte';
 import { dropLocalStream } from '$lib/plex/localStream';
 import { cachedTagGroups, groupForTag } from '$lib/plex/tags';
 import { getTransition, type Transition } from '$lib/plex/transitions';
+import { mixReleaseOf, withoutMixes } from '$lib/plex/mixes.svelte';
 import {
 	getArtistStationKey,
 	resolveMixStationKey,
@@ -87,7 +88,7 @@ function smoothNext(cur: Metadata): Metadata | null {
 	if (player.repeat === 'one') return null;
 	const nxt = player.queue[player.index + 1] ?? (player.repeat === 'all' ? player.queue[0] : undefined);
 	if (!nxt || nxt === cur) return null;
-	if (cur.parentRatingKey && nxt.parentRatingKey === cur.parentRatingKey) return null; // same album
+	if (releaseOf(cur) && releaseOf(nxt) === releaseOf(cur)) return null; // same album / mix CD
 	return nxt;
 }
 /** Fetch the transition points of the song that just loaded (and warm the cache for the next). */
@@ -170,8 +171,13 @@ function gaplessKind(t: Metadata): GaplessKind {
 }
 let streamKind: GaplessKind = 'mp3';
 
+/** What plays as one piece: the album, or the whole CD for a mix/live release (whose tracks Plex
+ *  often files as one "album" per track artist). */
+function releaseOf(t: Metadata | null | undefined): string {
+	return mixReleaseOf(t)?.id ?? t?.parentRatingKey ?? '';
+}
 function gaplessPair(a: Metadata | null | undefined, b: Metadata | null | undefined): boolean {
-	if (!a || !b || !a.parentRatingKey || a.parentRatingKey !== b.parentRatingKey) return false;
+	if (!a || !b || !releaseOf(a) || releaseOf(a) !== releaseOf(b)) return false;
 	if (isFlac(a) !== isFlac(b)) return false; // one stream = one format
 	return [a, b].every((t) => {
 		const d = t.duration ?? 0;
@@ -497,7 +503,7 @@ function onStreamTime(abs: number) {
 function startStream(a: HTMLAudioElement, track: Metadata, offsetS: number): boolean {
 	const kind = gaplessKind(track);
 	if (!gapless.on || !gaplessSupported(kind)) return false;
-	if (track.parentRatingKey && track.parentRatingKey === gaplessBlocked) return false;
+	if (releaseOf(track) && releaseOf(track) === gaplessBlocked) return false;
 	if (!gaplessNext(track) || !gaplessPair(track, track)) return false;
 	streamKind = kind;
 	const s = new GaplessStream(a, kind, gaplessUrl, gaplessNext, () => {
@@ -507,7 +513,7 @@ function startStream(a: HTMLAudioElement, track: Metadata, offsetS: number): boo
 		const at = player.currentTime;
 		const wasPlaying = player.playing;
 		stream = null;
-		gaplessBlocked = t?.parentRatingKey ?? '';
+		gaplessBlocked = releaseOf(t);
 		if (t) load(t, wasPlaying, at);
 	});
 	stream = s;
@@ -607,7 +613,7 @@ function onError() {
 		// The MediaSource stream broke: replay this track the normal way from where we were.
 		logEvent(`gapless stream error for "${track.title}" — normal playback`);
 		const at = player.currentTime;
-		gaplessBlocked = track.parentRatingKey ?? '';
+		gaplessBlocked = releaseOf(track);
 		stopStream();
 		load(track, player.playing, at);
 		return;
@@ -768,7 +774,7 @@ async function findMore(
 	n = 15
 ): Promise<{ items: Metadata[]; source: MoreSource; label?: string } | null> {
 	const similar = await getSonicallySimilar(seed.ratingKey, { limit: 40 }).catch(() => []);
-	const fresh = similar.filter(
+	const fresh = withoutMixes(similar).filter(
 		(t) => t.type === 'track' && !have.has(t.ratingKey) && !!t.Media?.[0]?.Part?.[0]?.key
 	);
 	// The closest matches first, lightly shuffled so the same seed doesn't give the same run.
@@ -779,7 +785,7 @@ async function findMore(
 		const stationKey = await getArtistStationKey(artistKey);
 		if (stationKey) {
 			const q = await createPlayQueue(stationUri(stationKey), { continuous: true });
-			const items = q.items.filter((t) => !have.has(t.ratingKey)).slice(0, n);
+			const items = withoutMixes(q.items).filter((t) => !have.has(t.ratingKey)).slice(0, n);
 			if (items.length) return { items, source: 'artist', label: seed.grandparentTitle };
 		}
 	} catch {
@@ -797,13 +803,13 @@ async function findMore(
 		// Use the cleaned-up group (all spellings of this genre) when it is known.
 		const group = groupForTag(cachedTagGroups(sectionId, 'genre') ?? [], genre.tag);
 		const ids = group ? group.ids.join(',') : String(genre.id);
-		const tracks = await getGenreTracksShuffled(sectionId, ids, 40);
-		const items = tracks.filter((t) => !have.has(t.ratingKey)).slice(0, n);
+		const tracks = await getGenreTracksShuffled(sectionId, ids, 60);
+		const items = withoutMixes(tracks).filter((t) => !have.has(t.ratingKey)).slice(0, n);
 		if (items.length) return { items, source: 'genre', label: group?.name ?? genre.tag };
 	}
 	if (sectionId) {
-		const res = await getAll(sectionId, { type: TYPE.track, sort: 'random', size: 30 });
-		const items = res.items.filter((t) => !have.has(t.ratingKey)).slice(0, n);
+		const res = await getAll(sectionId, { type: TYPE.track, sort: 'random', size: 40 });
+		const items = withoutMixes(res.items).filter((t) => !have.has(t.ratingKey)).slice(0, n);
 		if (items.length) return { items, source: 'random' };
 	}
 	return null;
@@ -1225,7 +1231,7 @@ async function extendRadio(): Promise<void> {
 		const have = new Set(player.queue.map((t) => t.playQueueItemID));
 		const fresh = q.items.filter((t) => t.playQueueItemID == null || !have.has(t.playQueueItemID));
 		if (fresh.length) {
-			appendToQueue(fresh);
+			appendToQueue(withoutMixes(fresh));
 			const lastId = q.items[q.items.length - 1]?.playQueueItemID ?? r.lastItemID;
 			player.radio = { ...r, lastItemID: lastId };
 		}
@@ -1253,7 +1259,10 @@ export async function playArtistRadio(artistKey: string): Promise<void> {
 			await shuffleArtist(artistKey);
 			return;
 		}
-		playList(q.items, 0, { radio: { playQueueID: q.playQueueID, lastItemID: q.lastItemID, artistKey } });
+		const items = withoutMixes(q.items);
+		playList(items.length ? items : q.items, 0, {
+			radio: { playQueueID: q.playQueueID, lastItemID: q.lastItemID, artistKey }
+		});
 	} catch (e) {
 		logEvent(`artist radio failed: ${(e as Error)?.message ?? e}`);
 	}
@@ -1305,7 +1314,8 @@ export async function shuffleArtist(artistKey: string): Promise<void> {
 			logEvent('artist shuffle: empty queue');
 			return;
 		}
-		playList(q.items, 0, { shuffle: true });
+		const items = withoutMixes(q.items);
+		playList(items.length ? items : q.items, 0, { shuffle: true });
 	} catch (e) {
 		logEvent(`artist shuffle failed: ${(e as Error)?.message ?? e}`);
 	}

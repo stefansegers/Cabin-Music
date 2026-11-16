@@ -10,6 +10,7 @@ import { cachedTagGroups, loadTagGroups, groupForTag, type TagGroup } from './ta
 import { readJSON, writeJSON } from './storage';
 import { STORAGE_PREFIX } from './config';
 import type { Metadata } from './types';
+import { withoutMixes } from './mixes.svelte';
 
 export interface DailyMix {
 	id: string;
@@ -105,7 +106,10 @@ export async function dailyMixTracks(mix: DailyMix): Promise<Metadata[]> {
 		getGenreTracksShuffled(mix.sectionId, mix.genreIds, 60)
 	]);
 	const seen = new Set<string>();
-	const pick = [...shuffle(favs.filter((t) => (t.viewCount ?? 0) > 0)).slice(0, 25), ...random.slice(0, 35)];
+	const pick = [
+		...shuffle(withoutMixes(favs).filter((t) => (t.viewCount ?? 0) > 0)).slice(0, 25),
+		...withoutMixes(random).slice(0, 35)
+	];
 	return shuffle(
 		pick.filter((t) => {
 			if (seen.has(t.ratingKey) || !t.Media?.[0]?.Part?.[0]?.key) return false;

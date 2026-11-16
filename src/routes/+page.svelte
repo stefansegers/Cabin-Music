@@ -4,6 +4,7 @@
 	import { getHubs, getPlaylists, findArtist, getLovedTracks, getAll, TYPE } from '$lib/plex/library';
 	import { playMixItem, playArtistRadio, playList } from '$lib/stores/player.svelte';
 	import { logEvent } from '$lib/stores/debug.svelte';
+	import { withoutMixes } from '$lib/plex/mixes.svelte';
 	import HubRow from '$lib/components/HubRow.svelte';
 	import HomeShelves from '$lib/components/HomeShelves.svelte';
 	import Icon from '$lib/components/Icon.svelte';
@@ -161,7 +162,8 @@
 		shuffling = true;
 		try {
 			const res = await getAll(sec.key, { type: TYPE.track, sort: 'random', size: 200 });
-			if (res.items.length) playList(res.items, 0, { shuffle: true });
+			const items = withoutMixes(res.items);
+			if (items.length) playList(items, 0, { shuffle: true });
 		} catch (e) {
 			logEvent(`shuffle library failed: ${(e as Error)?.message ?? e}`);
 		} finally {

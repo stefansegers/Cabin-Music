@@ -11,6 +11,7 @@ import { TYPE } from './library';
 import { readJSON, writeJSON } from './storage';
 import { STORAGE_PREFIX } from './config';
 import type { Metadata } from './types';
+import { isMixTrack } from './mixes.svelte';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -148,6 +149,7 @@ export async function decadeTracks(d: Decade, count = 30): Promise<Metadata[]> {
 	return items
 		.filter((t) => {
 			if (!t.Media?.[0]?.Part?.[0]?.key) return false;
+			if (isMixTrack(t)) return false; // a fragment of a megamix is no song on its own
 			if (skip && isLookBack(t.parentTitle, d.start)) return false;
 			// One song per title+artist, so a hit that's on three albums plays once.
 			const k = `${t.originalTitle ?? t.grandparentTitle ?? ''}|${t.title ?? ''}`.toLowerCase();

@@ -342,6 +342,11 @@ export class GaplessStream {
 		});
 	}
 
+	/** Wait until the SourceBuffer has finished whatever it is doing. */
+	private async idle(sb: SourceBuffer) {
+		while (sb.updating && !this.closed) await new Promise((r) => setTimeout(r, 20));
+	}
+
 	private async withSb(fn: (sb: SourceBuffer) => Promise<void>) {
 		const sb = this.sb;
 		if (!sb || this.closed) return;
@@ -398,7 +403,14 @@ export class GaplessStream {
 				if (this.ms.readyState === 'open' && !(this.ms.duration >= plannedEnd)) {
 					this.ms.duration = plannedEnd;
 				}
+				// The buffer can be busy again by now (a duration change, a replan's remove running
+				// alongside): timestampOffset and appendBuffer both throw while it is updating.
+				await this.idle(sb);
 				if (!p.placed) {
+					// A track whose last bytes end mid-frame leaves the parser inside a media segment, where
+					// timestampOffset can't change. abort() resets the parser (dropping that partial frame,
+					// which is past the previous track's appendWindowEnd anyway) and the append window.
+					if (this.ms.readyState === 'open') sb.abort();
 					// Place this track: cut the encoder delay and the end padding exactly.
 					sb.appendWindowStart = 0;
 					sb.appendWindowEnd = Infinity;
@@ -421,6 +433,7 @@ export class GaplessStream {
 					at += p.parts[i].length;
 				}
 				try {
+					await this.idle(sb);
 					sb.appendBuffer(chunk);
 					await this.updateEnd();
 				} catch (e) {

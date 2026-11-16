@@ -27,6 +27,13 @@
 	import { session } from '$lib/stores/session.svelte';
 	import { buildDailyMixes, cachedDailyMixes, dailyMixTracks, type DailyMix } from '$lib/plex/dailyMixes';
 	import type { Metadata } from '$lib/plex/types';
+	import {
+		loadMixReleases,
+		mixReleases,
+		mixReleaseTracks,
+		withoutMixes,
+		type MixRelease
+	} from '$lib/plex/mixes.svelte';
 
 	const TILE = 168;
 
@@ -73,9 +80,11 @@
 				}
 				case 'genre':
 				case 'mood':
-					playList(await getGenreTracksShuffled(p.sectionId, p.key, 200, undefined, { kind: p.kind }), 0, {
-						shuffle: false
-					});
+					playList(
+						withoutMixes(await getGenreTracksShuffled(p.sectionId, p.key, 200, undefined, { kind: p.kind })),
+						0,
+						{ shuffle: false }
+					);
 					break;
 				case 'playlist':
 					playList((await getPlaylistItems(p.key, { size: 500 })).items, 0);
@@ -140,6 +149,32 @@
 			if (tracks.length) playList(tracks, 0, { shuffle: false, feed: () => decadeTracks(d, 30) });
 		} catch (e) {
 			logEvent(`decade radio failed: ${(e as Error)?.message ?? e}`);
+		}
+	}
+
+	// --- Mixes & live: whole CDs that play as one piece (kept out of radio, see mixes.svelte.ts) ---
+	const mixes = $derived(activeSection() ? mixReleases(activeSection()!.key) : []);
+	$effect(() => {
+		const sec = activeSection();
+		if (!sec) return;
+		const ctrl = new AbortController();
+		loadMixReleases(sec.key, ctrl.signal).catch((e) => {
+			if (!ctrl.signal.aborted) logEvent(`mix scan failed: ${(e as Error)?.message ?? e}`);
+		});
+		return () => ctrl.abort();
+	});
+	function mixSubtitle(r: MixRelease): string {
+		const min = Math.round(r.durationMs / 60000);
+		const len = min >= 60 ? `${Math.floor(min / 60)} hr ${min % 60} min` : `${min} min`;
+		return r.artist ? `${r.artist} · ${len}` : len;
+	}
+	async function playMix(r: MixRelease) {
+		try {
+			const tracks = await mixReleaseTracks(r);
+			logEvent(`mix release "${r.title}": ${tracks.length} tracks`);
+			if (tracks.length) playList(tracks, 0, { shuffle: false });
+		} catch (e) {
+			logEvent(`mix release play failed: ${(e as Error)?.message ?? e}`);
 		}
 	}
 
@@ -221,6 +256,27 @@
 			{#each shownDecades as d (d.id)}
 				<div class="slot" style="width: {TILE / 16}rem">
 					<DecadeCard decade={d} size={TILE} onPlay={() => playDecade(d)} />
+				</div>
+			{/each}
+		</div>
+	</section>
+{/if}
+
+{#if mixes.length}
+	<section class="shelf">
+		<h2>Mixes & live</h2>
+		<div class="row">
+			{#each mixes as r (r.id)}
+				<div class="slot" style="width: {TILE / 16}rem">
+					<ShelfTile
+						title={r.title}
+						subtitle={mixSubtitle(r)}
+						thumb={r.thumb}
+						icon="album"
+						size={TILE}
+						onOpen={() => playMix(r)}
+						onPlay={() => playMix(r)}
+					/>
 				</div>
 			{/each}
 		</div>
