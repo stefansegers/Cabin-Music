@@ -26,6 +26,8 @@
 		setAutoplay,
 		gapless,
 		setGapless,
+		smooth,
+		setSmooth,
 		type KeepAlive
 	} from '$lib/stores/player.svelte';
 	import { session } from '$lib/stores/session.svelte';
@@ -182,6 +184,19 @@
 		<div class="seg">
 			<button class="seg-btn" class:sel={gapless.on} onclick={() => setGapless(true)}>On</button>
 			<button class="seg-btn" class:sel={!gapless.on} onclick={() => setGapless(false)}>Off</button>
+		</div>
+	</div>
+
+	<div class="group">
+		<h2>Smooth transitions</h2>
+		<p class="dim">
+			When a song fades out, the next one starts as soon as it has gone quiet, instead of after the
+			fade or trailing silence, and silence at the start of a song is skipped. Uses Plex's loudness
+			analysis. Songs of the same album are left to play as they were made.
+		</p>
+		<div class="seg">
+			<button class="seg-btn" class:sel={smooth.on} onclick={() => setSmooth(true)}>On</button>
+			<button class="seg-btn" class:sel={!smooth.on} onclick={() => setSmooth(false)}>Off</button>
 		</div>
 	</div>
 

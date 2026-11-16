@@ -9,6 +9,7 @@ import { bitrateFor } from '$lib/stores/quality.svelte';
 import { session } from '$lib/stores/session.svelte';
 import { dropLocalStream } from '$lib/plex/localStream';
 import { cachedTagGroups, groupForTag } from '$lib/plex/tags';
+import { getTransition, type Transition } from '$lib/plex/transitions';
 import {
 	getArtistStationKey,
 	resolveMixStationKey,
@@ -57,6 +58,106 @@ const GAPLESS_MIN_MS = 20_000;
 const GAPLESS_MAX_MS = 20 * 60 * 1000;
 let stream: GaplessStream | null = null;
 let gaplessBlocked = ''; // album (parentRatingKey) where the stream failed — play it the normal way
+
+// Smooth transitions: from Plex's loudness analysis, move on to the next song once the current one
+// has faded to near-silence (easing the volume down to it) and skip silence at the next song's start.
+// Only between different albums — an album's tracks are left to flow as the artist made them — and
+// never on a gapless stream. Nothing overlaps: one element, so the car's controls stay bound to it.
+const SMOOTH_KEY = STORAGE_PREFIX + 'smooth';
+export const smooth = $state({ on: readJSON<boolean>(SMOOTH_KEY, true) !== false });
+export function setSmooth(on: boolean): void {
+	smooth.on = on;
+	writeJSON(SMOOTH_KEY, on);
+	if (!on && audio) audio.volume = 1;
+}
+const SMOOTH_MIN_MS = 30_000;
+const SMOOTH_MAX_MS = 20 * 60 * 1000; // DJ mixes and live sets play to their real end
+const FADE_TO_DB = -14; // the volume ease ends this much lower (the track itself is already quiet)
+let plan: { key: string; tr: Transition } | null = null; // current track's transition points
+let leadInFor: string | null = null; // the next song was reached by a smooth transition: skip its silence
+let lastTickT = 0;
+let plannedFor: string | null = null; // track whose points were last requested (restore, fallbacks)
+
+function smoothEligible(t: Metadata | null | undefined): t is Metadata {
+	const d = t?.duration ?? 0;
+	return !!t?.ratingKey && d >= SMOOTH_MIN_MS && d <= SMOOTH_MAX_MS;
+}
+/** The track that follows the current one, when a smooth transition into it is allowed. */
+function smoothNext(cur: Metadata): Metadata | null {
+	if (player.repeat === 'one') return null;
+	const nxt = player.queue[player.index + 1] ?? (player.repeat === 'all' ? player.queue[0] : undefined);
+	if (!nxt || nxt === cur) return null;
+	if (cur.parentRatingKey && nxt.parentRatingKey === cur.parentRatingKey) return null; // same album
+	return nxt;
+}
+/** Fetch the transition points of the song that just loaded (and warm the cache for the next). */
+function planSmooth(track: Metadata) {
+	plan = null;
+	lastTickT = 0;
+	plannedFor = track.ratingKey;
+	if (!smooth.on || !smoothEligible(track)) return;
+	void getTransition(track.ratingKey).then((tr) => {
+		if (tr && currentTrack()?.ratingKey === track.ratingKey && !stream) plan = { key: track.ratingKey, tr };
+	});
+	const nxt = smoothNext(track);
+	if (smoothEligible(nxt)) void getTransition(nxt.ratingKey);
+}
+/** Per timeupdate (normal playback only): ease the volume over the fade-out, then move on. */
+function smoothTick(a: HTMLAudioElement) {
+	const t = a.currentTime;
+	const prevT = lastTickT;
+	lastTickT = t;
+	const cur = currentTrack();
+	// A track that started some other way (restored after a reload): fetch its points now.
+	if (smooth.on && cur && plannedFor !== cur.ratingKey) planSmooth(cur);
+	if (!smooth.on || !plan || !cur || plan.key !== cur.ratingKey || !plan.tr.cutBefore) {
+		if (a.volume !== 1) a.volume = 1;
+		return;
+	}
+	const nxt = smoothNext(cur);
+	// Plex's duration, from the same analysis as the ramps (a VBR MP3 can report a wildly wrong one).
+	const dur = cur.duration ? cur.duration / 1000 : Number.isFinite(a.duration) ? a.duration : 0;
+	const cutAt = dur - plan.tr.cutBefore;
+	const fadeAt = dur - plan.tr.fadeBefore;
+	if (!nxt || !dur || t < fadeAt) {
+		if (a.volume !== 1) a.volume = 1;
+		return;
+	}
+	// Only a song that plays INTO its ending moves on early — not a seek that lands there.
+	const playedInto = prevT > 0 && t - prevT < 1.5;
+	if (t >= cutAt) {
+		if (!playedInto || prevT >= cutAt) return;
+		logEvent(`smooth → "${nxt.title}" (${plan.tr.cutBefore.toFixed(1)} s early)${vis()}`);
+		plan = null;
+		leadInFor = nxt.ratingKey;
+		reportNow('paused'); // final position, so Plex counts the play (as on 'ended')
+		next(true);
+		return;
+	}
+	const span = Math.max(0.01, cutAt - fadeAt);
+	const frac = Math.min(1, Math.max(0, (t - fadeAt) / span));
+	a.volume = Math.pow(10, (FADE_TO_DB * frac) / 20);
+}
+/** A song reached by a smooth transition starts after its leading silence (original files only — a
+ *  transcode can't seek before it has data). */
+function applyLeadIn(a: HTMLAudioElement, track: Metadata) {
+	const wanted = leadInFor === track.ratingKey;
+	leadInFor = null;
+	if (!wanted || !smooth.on || !smoothEligible(track) || candidates[candidateIdx]?.includes('/transcode/')) return;
+	void getTransition(track.ratingKey).then((tr) => {
+		const at = tr?.leadIn ?? 0;
+		if (!at || currentTrack()?.ratingKey !== track.ratingKey) return;
+		const jump = () => {
+			if (currentTrack()?.ratingKey !== track.ratingKey || a.currentTime > at) return;
+			if (a.currentSrc.includes('/transcode/')) return; // fell back to a transcode meanwhile
+			a.currentTime = at;
+			player.currentTime = at;
+			syncMediaPosition();
+		};
+		if (a.readyState >= 1) jump();
+		else a.addEventListener('loadedmetadata', jump, { once: true });
+	});
+}
 
 /** FLAC files can stream as the original (repackaged losslessly); everything else via MP3. A capped
  *  quality setting means the user wants MP3 to save data, so that wins. */
@@ -177,7 +278,10 @@ function el(): HTMLAudioElement | null {
 	}
 	a.addEventListener('timeupdate', () => {
 		if (stream) onStreamTime(a.currentTime);
-		else player.currentTime = a.currentTime;
+		else {
+			player.currentTime = a.currentTime;
+			smoothTick(a);
+		}
 		persistSoon();
 		maybeReportTimeline();
 	});
@@ -418,8 +522,11 @@ function load(track: Metadata, autoplay: boolean, startAtS?: number) {
 	const a = el();
 	if (!a) return;
 	stopStream();
+	a.volume = 1;
+	plan = null;
 	const startAt = startAtS ?? resumePointMs(track) / 1000;
 	if (startStream(a, track, startAt)) {
+		leadInFor = null;
 		loadAt = Date.now();
 		player.currentTime = startAt;
 		player.duration = (track.duration ?? 0) / 1000;
@@ -448,7 +555,11 @@ function load(track: Metadata, autoplay: boolean, startAtS?: number) {
 				},
 				{ once: true }
 			);
-	} else resumeLongTrack(a, track);
+	} else {
+		resumeLongTrack(a, track);
+		applyLeadIn(a, track);
+	}
+	planSmooth(track);
 	// Publish the new track's timeline now, from Plex's duration, before anything plays. The position
 	// must never be unset while two elements are playing: Chromium ≤150 answers that by wiping the
 	// title and artwork from the system's media controls.
