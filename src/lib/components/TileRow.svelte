@@ -5,6 +5,8 @@
 		subtitle?: string;
 		thumb?: string | null;
 		icon?: string;
+		/** Draw a playlist cover (name / year on a colour band) instead of plain art. */
+		playlist?: boolean;
 		onPlay: () => void | Promise<void>;
 		onOpen: () => void;
 	}
@@ -15,6 +17,7 @@
 	// opens the full list.
 	import ShelfTile from './ShelfTile.svelte';
 	import Icon from './Icon.svelte';
+	import PlaylistCover from './PlaylistCover.svelte';
 
 	let { title, href, tiles, size = 168 }: { title: string; href?: string; tiles: Tile[]; size?: number } =
 		$props();
@@ -39,7 +42,9 @@
 					{size}
 					onPlay={t.onPlay}
 					onOpen={t.onOpen}
+					cover={t.playlist ? plCover : undefined}
 				/>
+				{#snippet plCover()}<PlaylistCover title={t.title} thumb={t.thumb} {size} />{/snippet}
 			</div>
 		{/each}
 	</div>

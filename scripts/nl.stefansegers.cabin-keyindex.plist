@@ -8,8 +8,9 @@
 	<string>nl.stefansegers.cabin-keyindex</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/opt/homebrew/bin/node</string>
-		<string>/Users/stefansegers/docker/cabin-music/scripts/keyindex.mjs</string>
+		<!-- The app (~/Applications/Cabin Keyindex.app, from scripts/keyindex.applescript) holds Full Disk
+		     Access for the music share and runs node; it logs to ~/Library/Logs/cabin-keyindex.log. -->
+		<string>/Users/stefansegers/Applications/Cabin Keyindex.app/Contents/MacOS/applet</string>
 	</array>
 	<key>WorkingDirectory</key>
 	<string>/Users/stefansegers/docker/cabin-music</string>
@@ -25,9 +26,5 @@
 		<key>Minute</key>
 		<integer>0</integer>
 	</dict>
-	<key>StandardOutPath</key>
-	<string>/Users/stefansegers/Library/Logs/cabin-keyindex.log</string>
-	<key>StandardErrorPath</key>
-	<string>/Users/stefansegers/Library/Logs/cabin-keyindex.log</string>
 </dict>
 </plist>

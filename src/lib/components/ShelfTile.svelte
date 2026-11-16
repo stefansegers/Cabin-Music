@@ -5,6 +5,7 @@
 	// (onOpen omitted) plays from both.
 	import Art from './Art.svelte';
 	import Icon from './Icon.svelte';
+	import type { Snippet } from 'svelte';
 
 	let {
 		title,
@@ -14,7 +15,8 @@
 		size = 168,
 		progress,
 		onOpen,
-		onPlay
+		onPlay,
+		cover
 	}: {
 		title: string;
 		subtitle?: string;
@@ -24,6 +26,8 @@
 		progress?: number; // 0..1
 		onOpen?: () => void;
 		onPlay?: () => void | Promise<void>;
+		/** Drawn instead of the artwork (e.g. a playlist cover). */
+		cover?: Snippet;
 	} = $props();
 
 	let busy = $state(false);
@@ -48,7 +52,9 @@
 			tabindex="-1"
 			aria-hidden="true"
 		>
-			{#if thumb}
+			{#if cover}
+				{@render cover()}
+			{:else if thumb}
 				<Art {thumb} w={size * 2} />
 			{:else}
 				<div class="ph"><Icon name={icon} size={44} /></div>

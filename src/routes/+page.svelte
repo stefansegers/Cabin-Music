@@ -240,8 +240,9 @@
 			id: p.ratingKey,
 			title: p.title,
 			subtitle: p.leafCount ? `${p.leafCount} tracks` : 'Playlist',
-			thumb: p.thumb ?? p.composite,
+			thumb: p.composite ?? p.thumb, // Plex's collage first: an own thumb is often an empty upload
 			icon: 'playlist',
+			playlist: true,
 			onPlay: async () => {
 				const tracks = (await getPlaylistItems(p.ratingKey, { size: 500 })).items;
 				if (tracks.length) playList(tracks, 0);

@@ -2,6 +2,7 @@
 	// Album-art tile that fills its container (square; round for artists). When `onActivate` is
 	// provided it renders as a button (e.g. a "Mixes for you" tile that starts radio); otherwise a link.
 	import Art from './Art.svelte';
+	import PlaylistCover from './PlaylistCover.svelte';
 	import type { Metadata } from '$lib/plex/types';
 
 	let {
@@ -53,7 +54,12 @@
 
 {#snippet body()}
 	<div class="art" class:round={isArtist}>
-		<Art {thumb} w={size * 2} />
+		{#if item.type === 'playlist'}
+			<!-- Plex's collage first: a playlist's own thumb is often an empty upload. -->
+			<PlaylistCover title={item.title} thumb={item.composite ?? thumb} {size} clear={false} />
+		{:else}
+			<Art {thumb} w={size * 2} />
+		{/if}
 	</div>
 	<div class="meta" class:center={isArtist}>
 		<span class="title">{item.title}</span>
@@ -79,6 +85,7 @@
 		text-align: left;
 	}
 	.art {
+		position: relative;
 		width: 100%;
 		aspect-ratio: 1 / 1;
 		border-radius: 0.625rem;
