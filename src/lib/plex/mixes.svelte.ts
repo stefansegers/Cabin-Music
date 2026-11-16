@@ -55,7 +55,7 @@ export function setNotMix(id: string, on: boolean): void {
 	writeJSON(NOTMIX_KEY, notMix.ids);
 }
 
-const VERSION = 1; // bump when the detection changes, so caches rebuild
+const VERSION = 2; // bump when the detection changes, so caches rebuild
 const MIN_TRACKS = 4;
 const MIN_SHARE = 0.7; // of a folder's tracks must end without silence
 const SILENCE_DB = 20; // an ending this far below the track's level counts as silence
@@ -154,6 +154,8 @@ function cleanTitle(segment: string): string {
 		.trim();
 }
 
+export type ReleaseTrack = { key: string; file: string; dur: number; thumb?: string; disc?: number; idx?: number };
+
 const byName = (a: string, b: string) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
 
 /** A release (one CD's folder, discs merged) from its tracks: title from the folder, artist from the
@@ -161,9 +163,14 @@ const byName = (a: string, b: string) => a.localeCompare(b, undefined, { numeric
 export function buildRelease(
 	id: string,
 	sectionId: string,
-	tracks: { key: string; file: string; dur: number; thumb?: string }[]
+	tracks: ReleaseTrack[]
 ): MixRelease {
-	tracks.sort((a, b) => byName(a.file, b.file));
+	// Play order: disc, then track number from the tags — a double CD in one folder has two "01"s, and
+	// its file names alone mix the discs up (Mazzo Presents Manic Monday). File name when tags lack it.
+	const tagged = tracks.every((t) => (t.idx ?? 0) > 0);
+	tracks.sort((a, b) =>
+		tagged ? (a.disc || 1) - (b.disc || 1) || a.idx! - b.idx! || byName(a.file, b.file) : byName(a.file, b.file)
+	);
 	const parts = id.split('/');
 	const title = cleanTitle(parts[parts.length - 1] ?? id);
 	const up = parts[parts.length - 2] ?? '';
@@ -182,7 +189,7 @@ export function buildRelease(
 
 async function scan(sectionId: string, signal?: AbortSignal): Promise<MixRelease[]> {
 	const t0 = Date.now();
-	type Dir = { n: number; runOn: number; tracks: { key: string; file: string; dur: number; thumb?: string }[] };
+	type Dir = { n: number; runOn: number; tracks: ReleaseTrack[] };
 	const dirs = new Map<string, Dir>();
 	const page = async (start: number) => {
 		const data = await serverFetch<any>(`/library/sections/${sectionId}/all`, {
@@ -209,7 +216,14 @@ async function scan(sectionId: string, signal?: AbortSignal): Promise<MixRelease
 				e.n++;
 				if (runOn) e.runOn++;
 			}
-			e.tracks.push({ key: String(t.ratingKey), file, dur: t.duration ?? 0, thumb: t.parentThumb ?? t.thumb });
+			e.tracks.push({
+				key: String(t.ratingKey),
+				file,
+				dur: t.duration ?? 0,
+				thumb: t.parentThumb ?? t.thumb,
+				disc: Number(t.parentIndex) || 0,
+				idx: Number(t.index) || 0
+			});
 			dirs.set(dir, e);
 		}
 		return Number(c.totalSize ?? 0);

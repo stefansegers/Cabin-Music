@@ -9,7 +9,7 @@ import { serverFetch } from './media';
 import { TYPE } from './library';
 import { readJSON, writeJSON } from './storage';
 import { STORAGE_PREFIX } from './config';
-import { buildRelease, dirOf, releaseDir, releaseHref, type MixRelease } from './mixes.svelte';
+import { buildRelease, dirOf, releaseDir, releaseHref, type MixRelease, type ReleaseTrack } from './mixes.svelte';
 import type { Metadata } from './types';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -61,7 +61,7 @@ export async function loadRecent(sectionId: string, signal?: AbortSignal): Promi
 	});
 	const tracks: Metadata[] = data?.MediaContainer?.Metadata ?? [];
 	type G = {
-		tracks: { key: string; file: string; dur: number; thumb?: string }[];
+		tracks: ReleaseTrack[];
 		albums: Set<string>;
 		artist?: string;
 	};
@@ -75,7 +75,9 @@ export async function loadRecent(sectionId: string, signal?: AbortSignal): Promi
 			key: String(t.ratingKey),
 			file: t.Media?.[0]?.Part?.[0]?.file ?? '',
 			dur: t.duration ?? 0,
-			thumb: t.parentThumb ?? t.thumb
+			thumb: t.parentThumb ?? t.thumb,
+			disc: Number(t.parentIndex) || 0,
+			idx: Number(t.index) || 0
 		});
 		if (t.parentRatingKey) g.albums.add(String(t.parentRatingKey));
 		g.artist ??= t.grandparentRatingKey ? String(t.grandparentRatingKey) : undefined;
