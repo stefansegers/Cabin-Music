@@ -16,7 +16,13 @@
 	import ShelfTile from './ShelfTile.svelte';
 	import DailyMixCard from './DailyMixCard.svelte';
 	import DecadeCard from './DecadeCard.svelte';
-	import { buildDecades, cachedDecades, decadeTracks, type Decade } from '$lib/plex/decades.svelte';
+	import {
+		buildDecades,
+		cachedDecades,
+		decadeTracks,
+		decadeOpts,
+		type Decade
+	} from '$lib/plex/decades.svelte';
 	import { activeSection } from '$lib/stores/library.svelte';
 	import { session } from '$lib/stores/session.svelte';
 	import { buildDailyMixes, cachedDailyMixes, dailyMixTracks, type DailyMix } from '$lib/plex/dailyMixes';
@@ -113,6 +119,7 @@
 
 	// --- Decades: endless radio per decade ---
 	let decades = $state<Decade[]>([]);
+	const shownDecades = $derived(decades.filter((d) => !decadeOpts.hidden.includes(d.start)));
 
 	$effect(() => {
 		const sec = activeSection();
@@ -207,11 +214,11 @@
 	</section>
 {/if}
 
-{#if decades.length}
+{#if shownDecades.length}
 	<section class="shelf">
 		<h2>Decades</h2>
 		<div class="row">
-			{#each decades as d (d.id)}
+			{#each shownDecades as d (d.id)}
 				<div class="slot" style="width: {TILE / 16}rem">
 					<DecadeCard decade={d} size={TILE} onPlay={() => playDecade(d)} />
 				</div>

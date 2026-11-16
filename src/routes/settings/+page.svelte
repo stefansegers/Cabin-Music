@@ -1,6 +1,13 @@
 <script lang="ts">
-	import { decadeOpts, setSkipCompilations } from '$lib/plex/decades.svelte';
-	import { library, setActive } from '$lib/stores/library.svelte';
+	import {
+		decadeOpts,
+		setSkipCompilations,
+		toggleDecade,
+		buildDecades,
+		cachedDecades,
+		type Decade
+	} from '$lib/plex/decades.svelte';
+	import { library, setActive, activeSection } from '$lib/stores/library.svelte';
 	import { theme, setTheme, type ThemeChoice } from '$lib/stores/theme.svelte';
 	import { drive, setDrive, type Drive } from '$lib/stores/drive.svelte';
 	import { scale, setScale, SCALES } from '$lib/stores/scale.svelte';
@@ -36,6 +43,21 @@
 		{ id: 'silent', label: 'Silence' },
 		{ id: 'off', label: 'Off' }
 	];
+
+	// The decades the active library has music for (same list Home shows).
+	let decadeList = $state<Decade[]>([]);
+	$effect(() => {
+		const sec = activeSection();
+		if (!sec) return;
+		decadeList = cachedDecades(sec.key) ?? [];
+		const ctrl = new AbortController();
+		buildDecades(sec.key, ctrl.signal)
+			.then((d) => {
+				if (!ctrl.signal.aborted) decadeList = d;
+			})
+			.catch(() => {});
+		return () => ctrl.abort();
+	});
 
 	function pickQuality(q: Quality) {
 		setQuality(q);
@@ -119,6 +141,23 @@
 			<button class="seg-btn" class:sel={!autoplay.on} onclick={() => setAutoplay(false)}>Off</button>
 		</div>
 	</div>
+
+	{#if decadeList.length}
+		<div class="group">
+			<h2>Decades on Home</h2>
+			<p class="dim">Which decade stations show on Home. Tap to turn one on or off.</p>
+			<div class="seg">
+				{#each decadeList as d (d.id)}
+					<button
+						class="chip"
+						class:sel={!decadeOpts.hidden.includes(d.start)}
+						aria-pressed={!decadeOpts.hidden.includes(d.start)}
+						onclick={() => toggleDecade(d.start)}>{d.label}</button
+					>
+				{/each}
+			</div>
+		</div>
+	{/if}
 
 	<div class="group">
 		<h2>Decade radio: skip compilations</h2>

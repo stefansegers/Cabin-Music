@@ -25,10 +25,20 @@ export interface Decade {
 }
 
 const SKIP_KEY = STORAGE_PREFIX + 'decades.skipCompilations';
-export const decadeOpts = $state({ skipCompilations: readJSON<boolean>(SKIP_KEY, true) !== false });
+const HIDDEN_KEY = STORAGE_PREFIX + 'decades.hidden';
+export const decadeOpts = $state({
+	skipCompilations: readJSON<boolean>(SKIP_KEY, true) !== false,
+	/** Decades (by start year, e.g. 1950) the user turned off for Home. */
+	hidden: readJSON<number[]>(HIDDEN_KEY, [])
+});
 export function setSkipCompilations(on: boolean): void {
 	decadeOpts.skipCompilations = on;
 	writeJSON(SKIP_KEY, on);
+}
+export function toggleDecade(start: number): void {
+	const h = decadeOpts.hidden;
+	decadeOpts.hidden = h.includes(start) ? h.filter((x) => x !== start) : [...h, start];
+	writeJSON(HIDDEN_KEY, decadeOpts.hidden);
 }
 
 const MIN_ALBUMS = 20;
@@ -54,7 +64,7 @@ function isCompilationAlbum(a: Metadata): boolean {
 }
 
 /** "80s" for the 1900s, "2010s" from 2000 on (so the 2020s don't read as the 1920s). */
-function label(start: number): string {
+export function decadeLabel(start: number): string {
 	return start >= 2000 ? `${start}s` : `${String(start).slice(2)}s`;
 }
 
@@ -107,7 +117,7 @@ export async function buildDecades(sectionId: string, signal?: AbortSignal): Pro
 				id: `${sectionId}:${start}`,
 				sectionId,
 				start,
-				label: label(start),
+				label: decadeLabel(start),
 				albums: total,
 				thumbs,
 				hue: (start * 7) % 360
