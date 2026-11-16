@@ -41,6 +41,20 @@ export function setExcludeMixes(on: boolean): void {
 	writeJSON(EXCLUDE_KEY, on);
 }
 
+// Releases the user marked "not a mix" (folder ids): they play and get picked like any album.
+const NOTMIX_KEY = STORAGE_PREFIX + 'mixes.notmix';
+const notMix = $state<{ ids: string[] }>({ ids: readJSON<string[]>(NOTMIX_KEY, []) });
+export function isNotMix(id: string): boolean {
+	return notMix.ids.includes(id);
+}
+export function notMixIds(): string[] {
+	return notMix.ids;
+}
+export function setNotMix(id: string, on: boolean): void {
+	notMix.ids = on ? [...new Set([...notMix.ids, id])] : notMix.ids.filter((x) => x !== id);
+	writeJSON(NOTMIX_KEY, notMix.ids);
+}
+
 const VERSION = 1; // bump when the detection changes, so caches rebuild
 const MIN_TRACKS = 4;
 const MIN_SHARE = 0.7; // of a folder's tracks must end without silence
@@ -84,7 +98,8 @@ function fromCache(sectionId: string): Cache | null {
 /** The mix/live release a track belongs to, or null. */
 export function mixReleaseOf(t: Metadata | null | undefined): MixRelease | null {
 	const d = dirOf(t);
-	return d ? (byDir.get(releaseDir(d)) ?? null) : null;
+	const r = d ? byDir.get(releaseDir(d)) : undefined;
+	return r && !isNotMix(r.id) ? r : null;
 }
 /** True for a track from a mix or live album (when keeping those out is on). */
 export function isMixTrack(t: Metadata | null | undefined): boolean {
@@ -98,7 +113,21 @@ export function withoutMixes<T extends Metadata>(list: T[]): T[] {
 
 /** The releases of a section (reactive; empty until loaded or scanned). */
 export function mixReleases(sectionId: string): MixRelease[] {
-	return releases[sectionId] ?? [];
+	return (releases[sectionId] ?? []).filter((r) => !isNotMix(r.id));
+}
+/** "DJ Ravin · 1 hr 1 min" */
+export function mixSubtitle(r: MixRelease): string {
+	const min = Math.round(r.durationMs / 60000);
+	const len = min >= 60 ? `${Math.floor(min / 60)} hr ${min % 60} min` : `${min} min`;
+	return r.artist ? `${r.artist} · ${len}` : len;
+}
+/** The release's page. */
+export function mixHref(r: MixRelease): string {
+	return `/mix?${new URLSearchParams({ id: r.id })}`;
+}
+/** One release by id, also when marked "not a mix" (its page stays reachable to undo that). */
+export function mixReleaseById(id: string): MixRelease | null {
+	return byDir.get(id) ?? null;
 }
 
 function rampOf(s: unknown): number[][] {
@@ -244,7 +273,7 @@ if (typeof localStorage !== 'undefined') {
 		for (let i = 0; i < localStorage.length; i++) {
 			const k = localStorage.key(i) ?? '';
 			const m = k.startsWith(`${STORAGE_PREFIX}mixes.`) ? k.slice(`${STORAGE_PREFIX}mixes.`.length) : '';
-			if (!m || m === 'exclude') continue;
+			if (!m || m === 'exclude' || m === 'notmix') continue;
 			const c = fromCache(m);
 			if (c) adopt(m, c.releases);
 		}

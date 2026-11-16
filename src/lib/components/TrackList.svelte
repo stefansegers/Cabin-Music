@@ -7,8 +7,15 @@
 	let {
 		tracks,
 		showArtist = false,
-		discs = false
-	}: { tracks: Metadata[]; showArtist?: boolean; discs?: boolean } = $props();
+		discs = false,
+		ordinal = false
+	}: {
+		tracks: Metadata[];
+		showArtist?: boolean;
+		discs?: boolean;
+		/** Number rows 1, 2, 3… by position (lists that aren't one album: Plex's track numbers mislead). */
+		ordinal?: boolean;
+	} = $props();
 
 	// Disc headings only when the list really spans more than one disc.
 	const multiDisc = $derived(discs && new Set(tracks.map((t) => t.parentIndex ?? 1)).size > 1);
@@ -43,7 +50,7 @@
 					{#if active}
 						<Icon name={player.playing ? 'pause' : 'play'} size={14} />
 					{:else}
-						{t.index ?? i + 1}
+						{ordinal ? i + 1 : (t.index ?? i + 1)}
 					{/if}
 				</span>
 				<span class="main">

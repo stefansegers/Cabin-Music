@@ -5,8 +5,12 @@
 	import Icon from './Icon.svelte';
 	import type { Decade } from '$lib/plex/decades.svelte';
 
-	let { decade, size = 168, onPlay }: { decade: Decade; size?: number; onPlay: () => Promise<void> | void } =
-		$props();
+	let {
+		decade,
+		size = 168,
+		onPlay,
+		onOpen
+	}: { decade: Decade; size?: number; onPlay: () => Promise<void> | void; onOpen?: () => void } = $props();
 
 	let busy = $state(false);
 	async function play() {
@@ -24,8 +28,8 @@
 	);
 </script>
 
-<button class="card" onclick={play} disabled={busy} style="--h: {decade.hue}" title="{decade.label} radio">
-	<div class="cover">
+<div class="card" style="--h: {decade.hue}" title="{decade.label} radio">
+	<button class="cover" onclick={play} disabled={busy}>
 		{#if cells.length}
 			<div class="grid">
 				{#each cells as t, i (i)}
@@ -36,9 +40,16 @@
 		<div class="shade"></div>
 		<span class="label">{decade.label}</span>
 		<span class="play" aria-hidden="true"><Icon name={busy ? 'radio' : 'play'} size={20} /></span>
-	</div>
-	<span class="sub">{decade.label} radio</span>
-</button>
+	</button>
+	{#if onOpen}
+		<button class="sub link" onclick={onOpen}>
+			<span class="t">{decade.label} radio</span>
+			<span class="chev" aria-hidden="true"><Icon name="chevron-right" size={16} /></span>
+		</button>
+	{:else}
+		<span class="sub">{decade.label} radio</span>
+	{/if}
+</div>
 
 <style>
 	.card {
@@ -51,6 +62,8 @@
 		text-align: left;
 	}
 	.cover {
+		display: block;
+		padding: 0;
 		position: relative;
 		width: 100%;
 		aspect-ratio: 1 / 1;
@@ -96,8 +109,33 @@
 		color: #fff;
 		box-shadow: 0 0.25rem 0.75rem rgba(0, 0, 0, 0.35);
 	}
-	.card:disabled .play {
+	.cover:disabled .play {
 		opacity: 0.75;
+	}
+	.sub.link {
+		display: flex;
+		align-items: center;
+		gap: 0.15rem;
+		margin: -0.3rem -0.4rem;
+		padding: 0.3rem 0.4rem;
+		border-radius: 0.5rem;
+		color: var(--text);
+		font-weight: 600;
+		text-align: left;
+	}
+	.sub.link:active {
+		background: var(--surface);
+	}
+	.t {
+		min-width: 0;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.chev {
+		flex: 0 0 auto;
+		display: grid;
+		color: var(--accent);
 	}
 	.sub {
 		font-size: 0.85rem;

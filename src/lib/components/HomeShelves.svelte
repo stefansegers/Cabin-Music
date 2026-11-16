@@ -31,9 +31,12 @@
 		loadMixReleases,
 		mixReleases,
 		mixReleaseTracks,
+		mixSubtitle,
+		mixHref,
 		withoutMixes,
 		type MixRelease
 	} from '$lib/plex/mixes.svelte';
+	import Icon from './Icon.svelte';
 
 	const TILE = 168;
 
@@ -163,11 +166,6 @@
 		});
 		return () => ctrl.abort();
 	});
-	function mixSubtitle(r: MixRelease): string {
-		const min = Math.round(r.durationMs / 60000);
-		const len = min >= 60 ? `${Math.floor(min / 60)} hr ${min % 60} min` : `${min} min`;
-		return r.artist ? `${r.artist} · ${len}` : len;
-	}
 	async function playMix(r: MixRelease) {
 		try {
 			const tracks = await mixReleaseTracks(r);
@@ -242,7 +240,12 @@
 		<div class="row">
 			{#each dailyMixes as m (m.id)}
 				<div class="slot" style="width: {200 / 16}rem">
-					<DailyMixCard mix={m} size={200} onPlay={() => playDailyMix(m)} />
+					<DailyMixCard
+						mix={m}
+						size={200}
+						onPlay={() => playDailyMix(m)}
+						onOpen={() => goto(`/dailymix?${new URLSearchParams({ id: m.id })}`)}
+					/>
 				</div>
 			{/each}
 		</div>
@@ -255,7 +258,12 @@
 		<div class="row">
 			{#each shownDecades as d (d.id)}
 				<div class="slot" style="width: {TILE / 16}rem">
-					<DecadeCard decade={d} size={TILE} onPlay={() => playDecade(d)} />
+					<DecadeCard
+						decade={d}
+						size={TILE}
+						onPlay={() => playDecade(d)}
+						onOpen={() => goto(`/decade?${new URLSearchParams({ id: d.id })}`)}
+					/>
 				</div>
 			{/each}
 		</div>
@@ -264,7 +272,9 @@
 
 {#if mixes.length}
 	<section class="shelf">
-		<h2>Mixes & live</h2>
+		<h2>
+			<a class="more" href="/mixes">Mixes & live <Icon name="chevron-right" size={20} /></a>
+		</h2>
 		<div class="row">
 			{#each mixes as r (r.id)}
 				<div class="slot" style="width: {TILE / 16}rem">
@@ -274,8 +284,8 @@
 						thumb={r.thumb}
 						icon="album"
 						size={TILE}
-						onOpen={() => playMix(r)}
 						onPlay={() => playMix(r)}
+						onOpen={() => goto(mixHref(r))}
 					/>
 				</div>
 			{/each}
@@ -296,7 +306,6 @@
 						icon="album"
 						size={TILE}
 						progress={progressOf(t)}
-						onOpen={() => playContinue(t)}
 						onPlay={() => playContinue(t)}
 					/>
 				</div>
@@ -313,6 +322,24 @@
 		margin: 0 0 0.85rem;
 		font-size: clamp(1.05rem, 1.8vw, 1.3rem);
 		font-weight: 600;
+	}
+	/* A shelf title that opens the full list: › after it, big enough to tap while driving. */
+	.more {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.2rem;
+		min-height: 2.75rem;
+		margin: -0.5rem -0.6rem;
+		padding: 0 0.6rem;
+		border-radius: 0.5rem;
+		color: var(--text);
+		text-decoration: none;
+	}
+	.more :global(svg) {
+		color: var(--accent);
+	}
+	.more:active {
+		background: var(--surface);
 	}
 	.row {
 		display: flex;

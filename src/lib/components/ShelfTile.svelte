@@ -1,6 +1,8 @@
 <script lang="ts">
-	// Home shelf tile for pins and "Continue listening": artwork (or an icon when there is none),
-	// title/subtitle, an optional progress bar, and an optional round play button for one-tap play.
+	// Home shelf tile: artwork (or an icon when there is none), title/subtitle, an optional progress
+	// bar and a round play button. Tapping the cover PLAYS; tapping the text OPENS the page (marked
+	// with a ›), so you can look at what's in it without stopping the music. A tile without a page
+	// (onOpen omitted) plays from both.
 	import Art from './Art.svelte';
 	import Icon from './Icon.svelte';
 
@@ -20,13 +22,13 @@
 		icon?: string;
 		size?: number;
 		progress?: number; // 0..1
-		onOpen: () => void;
-		onPlay?: () => void;
+		onOpen?: () => void;
+		onPlay?: () => void | Promise<void>;
 	} = $props();
 
 	let busy = $state(false);
-	async function play(e: MouseEvent) {
-		e.stopPropagation();
+	async function play(e?: MouseEvent) {
+		e?.stopPropagation();
 		if (!onPlay || busy) return;
 		busy = true;
 		try {
@@ -39,7 +41,13 @@
 
 <div class="tile">
 	<div class="art">
-		<button class="open-art" onclick={onOpen} title={title} tabindex="-1" aria-hidden="true">
+		<button
+			class="open-art"
+			onclick={() => (onPlay ? play() : onOpen?.())}
+			title={title}
+			tabindex="-1"
+			aria-hidden="true"
+		>
 			{#if thumb}
 				<Art {thumb} w={size * 2} />
 			{:else}
@@ -55,8 +63,11 @@
 			</button>
 		{/if}
 	</div>
-	<button class="open" onclick={onOpen}>
-		<span class="title">{title}</span>
+	<button class="open" class:link={!!onOpen} onclick={() => (onOpen ? onOpen() : play())}>
+		<span class="title">
+			<span class="t">{title}</span>
+			{#if onOpen}<span class="chev" aria-hidden="true"><Icon name="chevron-right" size={16} /></span>{/if}
+		</span>
 		{#if subtitle}<span class="sub">{subtitle}</span>{/if}
 	</button>
 </div>
@@ -117,11 +128,33 @@
 		max-width: 100%;
 	}
 	.title {
+		display: flex;
+		align-items: center;
+		gap: 0.15rem;
 		font-size: 0.95rem;
 		font-weight: 600;
+	}
+	.t {
+		min-width: 0;
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
+	}
+	/* Text that opens a page: a › after the title and a tinted surface on press, so it reads as a
+	   link and the cover (with its play button) as "play". */
+	.chev {
+		flex: 0 0 auto;
+		display: grid;
+		color: var(--accent);
+	}
+	.open.link {
+		margin: -0.3rem -0.4rem;
+		padding: 0.3rem 0.4rem;
+		width: calc(100% + 0.8rem);
+		border-radius: 0.5rem;
+	}
+	.open.link:active {
+		background: var(--surface);
 	}
 	.sub {
 		font-size: 0.85rem;

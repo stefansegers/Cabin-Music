@@ -32,7 +32,7 @@
 	} from '$lib/stores/player.svelte';
 	import { session } from '$lib/stores/session.svelte';
 	import { toggleDebug } from '$lib/stores/debug.svelte';
-	import { mixOpts, setExcludeMixes } from '$lib/plex/mixes.svelte';
+	import { mixOpts, setExcludeMixes, notMixIds, setNotMix, mixReleaseById } from '$lib/plex/mixes.svelte';
 	import { signOut } from '$lib/plex/auth';
 
 	const themes: ThemeChoice[] = ['auto', 'light', 'dark'];
@@ -200,6 +200,16 @@
 			<button class="seg-btn" class:sel={mixOpts.exclude} onclick={() => setExcludeMixes(true)}>Keep out of radio</button>
 			<button class="seg-btn" class:sel={!mixOpts.exclude} onclick={() => setExcludeMixes(false)}>Mix in</button>
 		</div>
+		{#if notMixIds().length}
+			<p class="dim">Marked "not a mix" (tap to undo):</p>
+			<div class="seg">
+				{#each notMixIds() as id (id)}
+					<button class="seg-btn" onclick={() => setNotMix(id, false)}>
+						{mixReleaseById(id)?.title ?? id.split('/').pop()} ✕
+					</button>
+				{/each}
+			</div>
+		{/if}
 	</div>
 
 	<div class="group">

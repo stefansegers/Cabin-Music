@@ -5,8 +5,12 @@
 	import Icon from './Icon.svelte';
 	import type { DailyMix } from '$lib/plex/dailyMixes';
 
-	let { mix, size = 200, onPlay }: { mix: DailyMix; size?: number; onPlay: () => Promise<void> | void } =
-		$props();
+	let {
+		mix,
+		size = 200,
+		onPlay,
+		onOpen
+	}: { mix: DailyMix; size?: number; onPlay: () => Promise<void> | void; onOpen?: () => void } = $props();
 
 	let busy = $state(false);
 	async function play() {
@@ -25,8 +29,8 @@
 	);
 </script>
 
-<button class="card" onclick={play} disabled={busy} style="--h: {mix.hue}" title="Daily Mix {mix.n} · {mix.genre}">
-	<div class="cover">
+<div class="card" style="--h: {mix.hue}" title="Daily Mix {mix.n} · {mix.genre}">
+	<button class="cover" onclick={play} disabled={busy}>
 		{#if cells.length}
 			<div class="grid">
 				{#each cells as t, i (i)}
@@ -39,9 +43,16 @@
 			<span class="genre">{mix.genre}</span>
 		</div>
 		<span class="play" aria-hidden="true"><Icon name={busy ? 'radio' : 'play'} size={22} /></span>
-	</div>
-	<span class="sub">{mix.artists.join(', ') || mix.genre}</span>
-</button>
+	</button>
+	{#if onOpen}
+		<button class="sub link" onclick={onOpen}>
+			<span class="t">{mix.artists.join(', ') || mix.genre}</span>
+			<span class="chev" aria-hidden="true"><Icon name="chevron-right" size={16} /></span>
+		</button>
+	{:else}
+		<span class="sub">{mix.artists.join(', ') || mix.genre}</span>
+	{/if}
+</div>
 
 <style>
 	.card {
@@ -54,6 +65,8 @@
 		text-align: left;
 	}
 	.cover {
+		display: block;
+		padding: 0;
 		position: relative;
 		width: 100%;
 		aspect-ratio: 1 / 1;
@@ -109,8 +122,33 @@
 		color: #fff;
 		box-shadow: 0 0.25rem 0.75rem rgba(0, 0, 0, 0.35);
 	}
-	.card:disabled .play {
+	.cover:disabled .play {
 		opacity: 0.75;
+	}
+	.sub.link {
+		display: flex;
+		align-items: center;
+		gap: 0.15rem;
+		margin: -0.3rem -0.4rem;
+		padding: 0.3rem 0.4rem;
+		border-radius: 0.5rem;
+		color: var(--text);
+		font-weight: 600;
+		text-align: left;
+	}
+	.sub.link:active {
+		background: var(--surface);
+	}
+	.t {
+		min-width: 0;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.chev {
+		flex: 0 0 auto;
+		display: grid;
+		color: var(--accent);
 	}
 	.sub {
 		font-size: 0.85rem;
