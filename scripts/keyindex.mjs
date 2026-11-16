@@ -19,7 +19,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const args = process.argv.slice(2);
@@ -205,6 +205,67 @@ async function* walk(dir) {
 	}
 }
 
+/** Seconds of near-silence (below −50 dB) a file starts with, from its first 2 s (0 when none).
+ *  Used to splice mix CDs whose MP3s each begin with a sliver of silence (0.05–0.3 s) seamlessly. */
+function leadingSilence(file) {
+	return new Promise((resolve) => {
+		execFile(
+			'ffmpeg',
+			['-nostdin', '-v', 'info', '-t', '2', '-i', file, '-af', 'silencedetect=n=-50dB:d=0.01', '-f', 'null', '-'],
+			{ timeout: 30_000 },
+			(_err, _out, err) => {
+				const m = String(err).match(/silence_start: (-?[\d.e-]+)[\s\S]*?silence_end: ([\d.]+)/);
+				resolve(m && Math.abs(Number(m[1])) < 0.01 ? Number(m[2]) : 0);
+			}
+		);
+	});
+}
+
+/** An MP3's exact playing time in seconds from its Xing/Info + LAME header (frames × samples per frame
+ *  − encoder delay − padding), or 0 when it has none. Plex's duration can be ~30 ms longer (the
+ *  padding), which leaves a gap when tracks of a mix are spliced. */
+async function mp3Duration(file) {
+	const fh = await fs.open(file, 'r');
+	try {
+		const head = Buffer.alloc(10);
+		await fh.read(head, 0, 10, 0);
+		let pos = head.toString('latin1', 0, 3) === 'ID3' ? 10 + syncsafe(head, 6) + (head[5] & 0x10 ? 10 : 0) : 0;
+		const b = Buffer.alloc(8192);
+		const { bytesRead } = await fh.read(b, 0, b.length, pos);
+		let i = 0;
+		while (i < bytesRead - 4 && !(b[i] === 0xff && (b[i + 1] & 0xe0) === 0xe0)) i++; // frame sync
+		if (i >= bytesRead - 4) return 0;
+		const ver = (b[i + 1] >> 3) & 3; // 3 = MPEG1, 2 = MPEG2, 0 = MPEG2.5
+		const layer = (b[i + 1] >> 1) & 3; // 1 = Layer III
+		const srIdx = (b[i + 2] >> 2) & 3;
+		const chan = (b[i + 3] >> 6) & 3;
+		if (layer !== 1 || srIdx === 3 || ver === 1) return 0;
+		const sr = [44100, 48000, 32000][srIdx] / (ver === 3 ? 1 : ver === 2 ? 2 : 4);
+		const spf = ver === 3 ? 1152 : 576;
+		const side = ver === 3 ? (chan === 3 ? 17 : 32) : chan === 3 ? 9 : 17;
+		const x = i + 4 + side;
+		const tag = b.toString('latin1', x, x + 4);
+		if (tag !== 'Xing' && tag !== 'Info') return 0;
+		const flags = b.readUInt32BE(x + 4);
+		if (!(flags & 1)) return 0;
+		const frames = b.readUInt32BE(x + 8);
+		let o = x + 8 + 4 + (flags & 2 ? 4 : 0) + (flags & 4 ? 100 : 0) + (flags & 8 ? 4 : 0);
+		let delay = 0;
+		let pad = 0;
+		if (b.toString('latin1', o, o + 4) === 'LAME' || b.toString('latin1', o, o + 4) === 'Lavc') {
+			const d = o + 21;
+			delay = (b[d] << 4) | (b[d + 1] >> 4);
+			pad = ((b[d + 1] & 0x0f) << 8) | b[d + 2];
+		}
+		const samples = frames * spf - delay - pad; // matches ffmpeg's decoded length exactly
+		return samples > 0 ? samples / sr : 0;
+	} catch {
+		return 0;
+	} finally {
+		await fh.close();
+	}
+}
+
 function entryOf(t) {
 	const bpm = Math.round(parseFloat(String(t.bpm ?? '').replace(',', '.')));
 	const key = camelot(t.key);
@@ -277,6 +338,7 @@ async function main() {
 	}
 	const files = {};
 	let read = 0;
+	let leads = 0;
 	let seen = 0;
 	const queue = [];
 	const work = async (file) => {
@@ -284,8 +346,15 @@ async function main() {
 		if (!st) return; // vanished or a dangling link
 		const sig = `${st.size}:${Math.round(st.mtimeMs)}`;
 		const old = state.files[file];
+		// Leading silence: library MP3s only (the gapless splice for mix CDs uses it), measured once.
+		const wantLead = file.startsWith(path.join(ROOT, 'Music Library') + '/') && /\.mp3$/i.test(file);
 		if (old && old.s === sig) {
 			files[file] = old;
+			if (wantLead && old.lead === undefined) {
+				old.lead = Math.round((await leadingSilence(file)) * 1000);
+				leads++;
+			}
+			if (wantLead && old.dur === undefined) old.dur = Math.round((await mp3Duration(file)) * 1000);
 			return;
 		}
 		let v = null;
@@ -296,6 +365,11 @@ async function main() {
 		}
 		read++;
 		files[file] = { s: sig, v };
+		if (wantLead) {
+			files[file].lead = Math.round((await leadingSilence(file)) * 1000);
+			files[file].dur = Math.round((await mp3Duration(file)) * 1000);
+			leads++;
+		}
 	};
 	for await (const file of walk(ROOT)) {
 		seen++;
@@ -306,14 +380,21 @@ async function main() {
 
 	const prefix = ROOT.endsWith('/') ? ROOT : ROOT + '/';
 	const tracks = {};
-	for (const [file, { v }] of Object.entries(files).sort(([a], [b]) => (a < b ? -1 : 1))) {
-		if (v) tracks[file.slice(prefix.length)] = v;
+	for (const [file, { v, lead, dur }] of Object.entries(files).sort(([a], [b]) => (a < b ? -1 : 1))) {
+		// "bpm|key|energy|leadMs|durMs": lead = ms of silence at the start (10 ms – 1.5 s), dur = the
+		// MP3's exact playing time from its LAME header. Trailing empty fields are dropped.
+		const l = lead >= 10 && lead <= 1500 ? lead : '';
+		const d = dur > 0 ? dur : '';
+		const parts = (v ?? '').split('|');
+		while (parts.length < 3) parts.push('');
+		const e = [...parts, l, d].join('|').replace(/\|+$/, '');
+		if (e) tracks[file.slice(prefix.length)] = e;
 	}
 	const body = JSON.stringify({ v: 1, prefix, tracks });
 	const hash = crypto.createHash('sha256').update(body).digest('hex');
 	const n = Object.keys(tracks).length;
 	console.log(
-		`keyindex: ${seen} files, ${read} read, ${n} with BPM/key, ${(body.length / 1e6).toFixed(1)} MB, ${((Date.now() - t0) / 1000).toFixed(0)} s`
+		`keyindex: ${seen} files, ${read} read, ${leads} silences measured, ${n} with BPM/key, ${(body.length / 1e6).toFixed(1)} MB, ${((Date.now() - t0) / 1000).toFixed(0)} s`
 	);
 
 	if (hash !== state.hash && !DRY) {

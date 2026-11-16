@@ -13,6 +13,8 @@ export interface KeyTags {
 	bpm: number | null;
 	key: string | null; // Camelot: "8A", "12B"
 	energy: number | null;
+	lead: number; // seconds of silence the file starts with (0 = none / not measured)
+	dur: number | null; // MP3: exact playing time in seconds (LAME header)
 }
 
 const state = $state({ server: '', ready: false });
@@ -47,6 +49,13 @@ async function load(machineId: string) {
 	}
 }
 
+/** Load the index for the connected server now (at start-up), so the first gapless splice of a mix
+ *  already has the exact MP3 lengths, not only lists that ask later. */
+export function preloadKeyTags(): void {
+	const id = session.active?.machineId;
+	if (id && state.server !== id) void load(id);
+}
+
 /** BPM / key / energy of a track, or null (not loaded yet, not tagged, or no index). Reactive: a
  *  list re-renders once the index arrives. */
 export function keyTags(t: Metadata | null | undefined): KeyTags | null {
@@ -60,8 +69,14 @@ export function keyTags(t: Metadata | null | undefined): KeyTags | null {
 	if (!file || !file.startsWith(prefix)) return null;
 	const v = byFile[file.slice(prefix.length)];
 	if (!v) return null;
-	const [b, k, e] = v.split('|');
-	return { bpm: b ? Number(b) : null, key: k || null, energy: e ? Number(e) : null };
+	const [b, k, e, l, d] = v.split('|');
+	return {
+		bpm: b ? Number(b) : null,
+		key: k || null,
+		energy: e ? Number(e) : null,
+		lead: l ? Number(l) / 1000 : 0,
+		dur: d ? Number(d) / 1000 : null
+	};
 }
 
 /** Is the index here (so sorting by BPM / key means something)? */

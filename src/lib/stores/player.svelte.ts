@@ -4,7 +4,7 @@
 
 import type { Metadata } from '$lib/plex/types';
 import { playbackCandidates, artUrl, transcodeUrl, streamUrl } from '$lib/plex/media';
-import { flowPick } from '$lib/plex/keytags.svelte';
+import { flowPick, keyTags } from '$lib/plex/keytags.svelte';
 import { GaplessStream, gaplessSupported, type GaplessKind } from '$lib/plex/gapless';
 import { bitrateFor } from '$lib/stores/quality.svelte';
 import { session } from '$lib/stores/session.svelte';
@@ -516,6 +516,10 @@ function startStream(a: HTMLAudioElement, track: Metadata, offsetS: number): boo
 		stream = null;
 		gaplessBlocked = releaseOf(t);
 		if (t) load(t, wasPlaying, at);
+	}, (t) => {
+		const k = keyTags(t);
+		// Exact MP3 length for every splice; the leading silence is cut only on mix CDs.
+		return { dur: k?.dur ?? null, lead: mixReleaseOf(t) ? (k?.lead ?? 0) : 0 };
 	});
 	stream = s;
 	candidates = [];

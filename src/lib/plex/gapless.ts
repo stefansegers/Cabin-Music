@@ -52,6 +52,7 @@ interface Pending {
 	failed: boolean;
 	exact: boolean; // seg.end is final (FLAC: from STREAMINFO) — the next track may be placed after it
 	seekTo: number; // FLAC: start this far into the track (seconds) via an HTTP Range request
+	lead: number; // MP3: seconds of silence at the start of the track to cut out (mix CDs)
 }
 
 function concat(a: Uint8Array, b: Uint8Array): Uint8Array {
@@ -92,7 +93,10 @@ export class GaplessStream {
 		private urlFor: (t: Metadata) => string | null,
 		/** Next track to chain after `prev`, or null when the album run ends. */
 		private nextAfter: (prev: Metadata) => Metadata | null,
-		private onFail: (why: string) => void
+		private onFail: (why: string) => void,
+		/** MP3: the track's exact playing time (s, from its LAME header; null = use Plex's duration) and
+		 *  the seconds of silence it starts with that should be cut out of the splice (0 = none). */
+		private fitFor: (t: Metadata) => { dur: number | null; lead: number } = () => ({ dur: null, lead: 0 })
 	) {
 		this.url = URL.createObjectURL(this.ms);
 		a.addEventListener('waiting', this.onWaiting);
@@ -218,7 +222,13 @@ export class GaplessStream {
 	private enqueue(track: Metadata, seekTo = 0) {
 		const last = this.segments[this.segments.length - 1];
 		const start = last ? last.end : 0;
-		const seg = { track, start, end: start + (track.duration ?? 0) / 1000 };
+		// A mix CD whose MP3s each begin with a sliver of silence: cut it, so the mix runs on seamlessly.
+		// Plex's duration of an MP3 includes the encoder's end padding (~30 ms of silence): use the exact
+		// length when known, so the next track follows the last real sample.
+		const fit = this.kind === 'mp3' ? this.fitFor(track) : { dur: null, lead: 0 };
+		const lead = !seekTo ? Math.max(0, Math.min(1.5, fit.lead || 0)) : 0;
+		const len = fit.dur && fit.dur > 1 ? fit.dur : (track.duration ?? 0) / 1000;
+		const seg = { track, start, end: start + len - lead };
 		this.segments.push(seg);
 		this.queue.push({
 			seg,
@@ -229,7 +239,8 @@ export class GaplessStream {
 			fetching: null,
 			failed: false,
 			exact: this.kind === 'mp3', // MP3: Plex's duration is what we clip to
-			seekTo: this.kind === 'flac' ? seekTo : 0
+			seekTo: this.kind === 'flac' ? seekTo : 0,
+			lead
 		});
 	}
 
@@ -461,7 +472,8 @@ export class GaplessStream {
 					// Place this track: cut the encoder delay and the end padding exactly.
 					sb.appendWindowStart = 0;
 					sb.appendWindowEnd = Infinity;
-					sb.timestampOffset = p.seg.start - (this.kind === 'mp3' ? MP3_DELAY_S : 0);
+					// (The first `lead` seconds land before appendWindowStart and are dropped.)
+					sb.timestampOffset = p.seg.start - (this.kind === 'mp3' ? MP3_DELAY_S + p.lead : 0);
 					sb.appendWindowEnd = p.seg.end;
 					sb.appendWindowStart = p.seg.start;
 					p.placed = true;

@@ -4,11 +4,17 @@
 	import NavRail from './NavRail.svelte';
 	import NowPlayingBar from './NowPlayingBar.svelte';
 	import { restore } from '$lib/stores/player.svelte';
+	import { preloadKeyTags } from '$lib/plex/keytags.svelte';
+	import { session } from '$lib/stores/session.svelte';
 
 	let { children } = $props();
 
 	// Restore the last queue (paused) once we're connected and the shell is mounted.
 	onMount(() => restore());
+	// BPM / key / exact MP3 lengths: fetch as soon as a server is connected (see keytags.svelte.ts).
+	$effect(() => {
+		if (session.active?.machineId) preloadKeyTags();
+	});
 
 	// The page scrolls inside <main>, not the window, so SvelteKit's own scroll handling never sees
 	// it: a new page opens at the top, and Back returns to where you were (e.g. on Home's shelves).
