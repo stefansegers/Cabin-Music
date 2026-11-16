@@ -266,6 +266,23 @@ async function main() {
 		console.log(`keyindex: uploaded tags:${machineId}`);
 	} else console.log(DRY ? 'keyindex: dry run, not uploaded' : 'keyindex: unchanged, not uploaded');
 
+	// A playlist of the library's tracks that still have no BPM/key, next to the library on the share:
+	// drag it into Mixed In Key (paths are relative, so it works wherever the share is mounted).
+	if (!DRY) {
+		const lib = path.join(ROOT, 'Music Library') + '/';
+		const todo = Object.keys(files)
+			.filter((f) => f.startsWith(lib) && !files[f].v)
+			.sort();
+		const list = '#EXTM3U\n' + todo.map((f) => f.slice(prefix.length) + '\n').join('');
+		const m3u = path.join(ROOT, '_Mixed In Key - nog analyseren.m3u8');
+		const old = await fs.readFile(m3u, 'utf8').catch(() => '');
+		if (old !== list) await fs.writeFile(m3u, list);
+		const dirs = [...new Set(todo.map((f) => path.dirname(f).slice(prefix.length)))];
+		const txt = path.join(ROOT, '_Mixed In Key - nog analyseren (mappen).txt');
+		await fs.writeFile(txt, `${todo.length} nummers zonder BPM/key in ${dirs.length} mappen.\n\n${dirs.join('\n')}\n`);
+		console.log(`keyindex: ${todo.length} library tracks still without BPM/key (list on the share)`);
+	}
+
 	if (!DRY) {
 		await fs.mkdir(STATE_DIR, { recursive: true });
 		await fs.writeFile(STATE, JSON.stringify({ files, hash: DRY ? state.hash : hash }));
