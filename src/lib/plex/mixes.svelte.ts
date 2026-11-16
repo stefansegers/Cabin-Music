@@ -77,7 +77,7 @@ export function dirOf(t: Metadata | null | undefined): string {
 	return i > 0 ? f.slice(0, i) : '';
 }
 /** "…/Thunderdome VII/Disc 02" → "…/Thunderdome VII": a release's discs belong together. */
-function releaseDir(dir: string): string {
+export function releaseDir(dir: string): string {
 	return dir.replace(/\/(?:disc|disk|cd)[\s_-]*\d{1,2}$/i, '');
 }
 
@@ -121,9 +121,9 @@ export function mixSubtitle(r: MixRelease): string {
 	const len = min >= 60 ? `${Math.floor(min / 60)} hr ${min % 60} min` : `${min} min`;
 	return r.artist ? `${r.artist} · ${len}` : len;
 }
-/** The release's page. */
-export function mixHref(r: MixRelease): string {
-	return `/mix?${new URLSearchParams({ id: r.id })}`;
+/** A release's page (mix, live album or a CD from Recently added). */
+export function releaseHref(r: MixRelease): string {
+	return `/release?${new URLSearchParams({ id: r.id })}`;
 }
 /** One release by id, also when marked "not a mix" (its page stays reachable to undo that). */
 export function mixReleaseById(id: string): MixRelease | null {
@@ -152,6 +152,32 @@ function cleanTitle(segment: string): string {
 		.replace(/_/g, ' ')
 		.replace(/\s{2,}/g, ' ')
 		.trim();
+}
+
+const byName = (a: string, b: string) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+
+/** A release (one CD's folder, discs merged) from its tracks: title from the folder, artist from the
+ *  folder above it, tracks in file order. */
+export function buildRelease(
+	id: string,
+	sectionId: string,
+	tracks: { key: string; file: string; dur: number; thumb?: string }[]
+): MixRelease {
+	tracks.sort((a, b) => byName(a.file, b.file));
+	const parts = id.split('/');
+	const title = cleanTitle(parts[parts.length - 1] ?? id);
+	const up = parts[parts.length - 2] ?? '';
+	// ".../D/DJ Dano/Manic Monday" → by DJ Dano; ".../Various Artists/…" or ".../V/…" → no artist.
+	const artist = up.length > 1 && !/^(various( artists)?|va|music library|compilations?)$/i.test(up) ? up : null;
+	return {
+		id,
+		sectionId,
+		title,
+		artist,
+		keys: tracks.map((t) => t.key),
+		thumb: tracks.find((t) => t.thumb)?.thumb ?? null,
+		durationMs: tracks.reduce((a, t) => a + t.dur, 0)
+	};
 }
 
 async function scan(sectionId: string, signal?: AbortSignal): Promise<MixRelease[]> {
@@ -203,24 +229,7 @@ async function scan(sectionId: string, signal?: AbortSignal): Promise<MixRelease
 		const id = releaseDir(dir);
 		merged.set(id, [...(merged.get(id) ?? []), ...e.tracks]);
 	}
-	const byName = (a: string, b: string) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
-	const list: MixRelease[] = [...merged].map(([id, tracks]) => {
-		tracks.sort((a, b) => byName(a.file, b.file));
-		const parts = id.split('/');
-		const title = cleanTitle(parts[parts.length - 1] ?? id);
-		const up = parts[parts.length - 2] ?? '';
-		// ".../D/DJ Dano/Manic Monday" → by DJ Dano; ".../Various Artists/…" or ".../V/…" → no artist.
-		const artist = up.length > 1 && !/^(various( artists)?|va|music library|compilations?)$/i.test(up) ? up : null;
-		return {
-			id,
-			sectionId,
-			title,
-			artist,
-			keys: tracks.map((t) => t.key),
-			thumb: tracks.find((t) => t.thumb)?.thumb ?? null,
-			durationMs: tracks.reduce((a, t) => a + t.dur, 0)
-		};
-	});
+	const list: MixRelease[] = [...merged].map(([id, tracks]) => buildRelease(id, sectionId, tracks));
 	list.sort((a, b) => byName(a.title, b.title));
 	// A library that is mostly mixes (a mixes library) is listened to as such: leave it alone.
 	const all = [...dirs.values()].reduce((a, e) => a + e.tracks.length, 0);
@@ -257,7 +266,7 @@ export function loadMixReleases(sectionId: string, signal?: AbortSignal): Promis
 }
 
 /** The release's tracks, in order, ready to play. */
-export async function mixReleaseTracks(r: MixRelease): Promise<Metadata[]> {
+export async function releaseTracks(r: MixRelease): Promise<Metadata[]> {
 	const got = new Map<string, Metadata>();
 	for (let i = 0; i < r.keys.length; i += 80) {
 		const chunk = r.keys.slice(i, i + 80);

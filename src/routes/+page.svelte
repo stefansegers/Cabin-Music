@@ -1,10 +1,21 @@
 <script lang="ts">
 	// Home — Plex-style hub rows for the active library, in the user's preferred order.
 	import { activeSection } from '$lib/stores/library.svelte';
-	import { getHubs, getPlaylists, findArtist, getLovedTracks, getAll, TYPE } from '$lib/plex/library';
+	import {
+		getHubs,
+		getPlaylists,
+		getPlaylistItems,
+		findArtist,
+		getLovedTracks,
+		getAll,
+		TYPE
+	} from '$lib/plex/library';
+	import { goto } from '$app/navigation';
+	import { cachedRecent, loadRecent, recentHref, type RecentRelease } from '$lib/plex/recent';
+	import TileRow, { type Tile } from '$lib/components/TileRow.svelte';
 	import { playMixItem, playArtistRadio, playList } from '$lib/stores/player.svelte';
 	import { logEvent } from '$lib/stores/debug.svelte';
-	import { withoutMixes } from '$lib/plex/mixes.svelte';
+	import { withoutMixes, releaseTracks } from '$lib/plex/mixes.svelte';
 	import HubRow from '$lib/components/HubRow.svelte';
 	import HomeShelves from '$lib/components/HomeShelves.svelte';
 	import Icon from '$lib/components/Icon.svelte';
@@ -13,6 +24,9 @@
 	type Kind = 'mixes' | 'recentlyPlayed' | 'recentlyAdded' | 'onThisDay' | 'playlists' | 'other';
 	type Row = {
 		key: string;
+		kind?: Kind;
+		href?: string; // the title opens the full list
+		tiles?: Tile[]; // render as play/open tiles instead of Plex's tiles
 		title: string;
 		items: Metadata[];
 		variant?: 'tile' | 'mix';
@@ -194,6 +208,48 @@
 		}
 	}
 
+	// --- Recently added, per CD (see recent.ts); playlists as play/open tiles ---
+	function recentTiles(list: RecentRelease[]): Tile[] {
+		return list.map((r, i) => ({
+			id: r.id,
+			title: r.title,
+			subtitle: [r.artist ?? 'Various artists', r.keys.length > 1 ? `${r.keys.length} tracks` : '']
+				.filter(Boolean)
+				.join(' · '),
+			thumb: r.thumb,
+			// This one, then on through the rest of what was added (newest first).
+			onPlay: async () => {
+				const keys = list.slice(i).flatMap((x) => x.keys);
+				const tracks = await releaseTracks({ ...r, keys });
+				if (tracks.length) playList(tracks, 0, { shuffle: false });
+			},
+			onOpen: () => void goto(recentHref(r))
+		}));
+	}
+	async function refreshRecent(sectionId: string, signal: AbortSignal) {
+		try {
+			const list = await loadRecent(sectionId, signal);
+			if (signal.aborted || !list.length) return;
+			rows = rows.map((r) => (r.kind === 'recentlyAdded' ? { ...r, tiles: recentTiles(list) } : r));
+		} catch (e) {
+			if (!signal.aborted) logEvent(`recently added failed: ${(e as Error)?.message ?? e}`);
+		}
+	}
+	function playlistTiles(items: Metadata[]): Tile[] {
+		return items.map((p) => ({
+			id: p.ratingKey,
+			title: p.title,
+			subtitle: p.leafCount ? `${p.leafCount} tracks` : 'Playlist',
+			thumb: p.thumb ?? p.composite,
+			icon: 'playlist',
+			onPlay: async () => {
+				const tracks = (await getPlaylistItems(p.ratingKey, { size: 500 })).items;
+				if (tracks.length) playList(tracks, 0);
+			},
+			onOpen: () => void goto(`/playlist/${p.ratingKey}`)
+		}));
+	}
+
 	async function load(sectionId: string, sectionTitle: string, signal: AbortSignal) {
 		loading = true;
 		error = null;
@@ -215,7 +271,10 @@
 					variant: kind === 'mixes' ? ('mix' as const) : undefined,
 					tileSize: kind === 'mixes' ? 220 : undefined,
 					subtitleFor: kind === 'onThisDay' ? yearsAgo : undefined,
-					onItem: kind === 'mixes' ? (m: Metadata) => void playMix(m) : undefined
+					onItem: kind === 'mixes' ? (m: Metadata) => void playMix(m) : undefined,
+					kind,
+					...(kind === 'recentlyAdded' ? { tiles: recentTiles(cachedRecent(sectionId)), href: '/recent' } : {}),
+					...(kind === 'playlists' ? { tiles: playlistTiles(hub.items), href: '/playlists' } : {})
 				}));
 
 			const hasPlaylists = hubs.some((h) => kindOf(h) === 'playlists');
@@ -223,7 +282,14 @@
 				try {
 					const pl = await getPlaylists({ size: 16 }, signal);
 					if (!signal.aborted && pl.items.length) {
-						built.push({ key: 'recent.playlists', title: 'Recent playlists', items: pl.items });
+						built.push({
+							key: 'recent.playlists',
+							title: 'Recent playlists',
+							items: pl.items,
+							kind: 'playlists',
+							tiles: playlistTiles(pl.items),
+							href: '/playlists'
+						});
 					}
 				} catch {
 					/* playlists are best-effort */
@@ -231,6 +297,7 @@
 			}
 
 			rows = built.filter((r) => r.items.length > 0);
+			void refreshRecent(sectionId, signal);
 
 			// Fill in mix art + included-artists after first paint (each mix needs its tracks fetched).
 			const mixRow = rows.find((r) => r.variant === 'mix');
@@ -262,6 +329,9 @@
 		<p class="dim">Your server didn't return any home rows for this library yet.</p>
 	{:else}
 		{#each rows as row (row.key)}
+			{#if row.tiles?.length}
+				<TileRow title={row.title} href={row.href} tiles={row.tiles} />
+			{:else}
 			<HubRow
 				title={row.title}
 				items={row.items}
@@ -270,6 +340,7 @@
 				subtitleFor={row.subtitleFor}
 				onItem={row.onItem}
 			/>
+			{/if}
 		{/each}
 	{/if}
 </section>

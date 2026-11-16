@@ -8,9 +8,9 @@
 	import {
 		loadMixReleases,
 		mixReleases,
-		mixReleaseTracks,
+		releaseTracks,
 		mixSubtitle,
-		mixHref,
+		releaseHref,
 		type MixRelease
 	} from '$lib/plex/mixes.svelte';
 
@@ -30,7 +30,7 @@
 	});
 
 	async function play(r: MixRelease) {
-		const tracks = await mixReleaseTracks(r);
+		const tracks = await releaseTracks(r);
 		if (tracks.length) playList(tracks, 0, { shuffle: false });
 	}
 </script>
@@ -47,7 +47,7 @@
 					thumb={r.thumb}
 					icon="album"
 					onPlay={() => play(r)}
-					onOpen={() => goto(mixHref(r))}
+					onOpen={() => goto(releaseHref(r))}
 				/>
 			{/each}
 		</div>
