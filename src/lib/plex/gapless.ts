@@ -21,9 +21,16 @@
 import type { Metadata } from './types';
 import { logEvent } from '$lib/stores/debug.svelte';
 import { FlacToMp4, initSegment, parseFlacHeader, type StreamInfo } from './flacmp4';
+import { parseMp3Head, id3v1Tail } from './mp3head';
 
-export type GaplessKind = 'flac' | 'mp3';
-const MIME: Record<GaplessKind, string> = { flac: 'audio/mp4; codecs="flac"', mp3: 'audio/mpeg' };
+// 'mp3o': the ORIGINAL MP3 file (no re-encode by Plex's transcoder), its encoder delay and padding
+// cut exactly from its LAME tag — the closest MP3 gets to seamless. Optional (Settings).
+export type GaplessKind = 'flac' | 'mp3' | 'mp3o';
+const MIME: Record<GaplessKind, string> = {
+	flac: 'audio/mp4; codecs="flac"',
+	mp3: 'audio/mpeg',
+	mp3o: 'audio/mpeg'
+};
 
 const MP3_DELAY_S = 1105 / 44100; // LAME/ffmpeg encoder delay + decoder delay at 44.1 kHz
 const CHUNK = 512 * 1024; // bytes per appendBuffer
@@ -53,6 +60,7 @@ interface Pending {
 	exact: boolean; // seg.end is final (FLAC: from STREAMINFO) — the next track may be placed after it
 	seekTo: number; // FLAC: start this far into the track (seconds) via an HTTP Range request
 	lead: number; // MP3: seconds of silence at the start of the track to cut out (mix CDs)
+	delayS: number; // original MP3: seconds of encoder + decoder delay at the start (from the LAME tag)
 }
 
 function concat(a: Uint8Array, b: Uint8Array): Uint8Array {
@@ -108,7 +116,7 @@ export class GaplessStream {
 	 *  would leave a silent gap the element stalls on. The previous track is fully appended by now, so
 	 *  the buffer's end is its true end: pull this segment (and any planned after it) back onto it. */
 	private closeGap(seg: Segment, sb: SourceBuffer) {
-		if (this.kind !== 'mp3') return;
+		if (this.kind === 'flac') return;
 		const i = this.segments.indexOf(seg);
 		if (i <= 0 || !sb.buffered.length) return;
 		const realEnd = sb.buffered.end(sb.buffered.length - 1);
@@ -225,7 +233,7 @@ export class GaplessStream {
 		// A mix CD whose MP3s each begin with a sliver of silence: cut it, so the mix runs on seamlessly.
 		// Plex's duration of an MP3 includes the encoder's end padding (~30 ms of silence): use the exact
 		// length when known, so the next track follows the last real sample.
-		const fit = this.kind === 'mp3' ? this.fitFor(track) : { dur: null, lead: 0 };
+		const fit = this.kind !== 'flac' ? this.fitFor(track) : { dur: null, lead: 0 };
 		const lead = !seekTo ? Math.max(0, Math.min(1.5, fit.lead || 0)) : 0;
 		const len = fit.dur && fit.dur > 1 ? fit.dur : (track.duration ?? 0) / 1000;
 		const seg = { track, start, end: start + len - lead };
@@ -238,9 +246,10 @@ export class GaplessStream {
 			complete: false,
 			fetching: null,
 			failed: false,
-			exact: this.kind === 'mp3', // MP3: Plex's duration is what we clip to
+			exact: this.kind === 'mp3', // MP3: Plex's / the index's length; FLAC & original MP3: from the file
 			seekTo: this.kind === 'flac' ? seekTo : 0,
-			lead
+			lead,
+			delayS: 0
 		});
 	}
 
@@ -340,6 +349,57 @@ export class GaplessStream {
 		})();
 	}
 
+	/** Original MP3: strip the ID3 tag and the Xing/LAME frame, take the exact delay and length from
+	 *  the LAME tag, and pass the audio frames on as they arrive (a trailing ID3v1 tag is dropped). */
+	private fetchMp3Original(p: Pending, url: string) {
+		p.fetching = (async () => {
+			for (let attempt = 0; attempt < 3 && !p.complete && !this.closed; attempt++) {
+				try {
+					const r = await fetch(url, { cache: 'no-store', signal: this.abort.signal });
+					if (!r.ok || !r.body) throw new Error(`HTTP ${r.status}`);
+					const reader = r.body.getReader();
+					let head: Uint8Array | null = new Uint8Array(0);
+					let hold: Uint8Array = new Uint8Array(0); // the last 128 bytes: maybe an ID3v1 tag
+					const pass = (bytes: Uint8Array) => {
+						const all = concat(hold, bytes);
+						const keep = Math.min(128, all.length);
+						if (all.length > keep) p.parts.push(all.subarray(0, all.length - keep));
+						hold = all.slice(all.length - keep);
+					};
+					for (;;) {
+						const { value, done } = await reader.read();
+						if (value?.length) {
+							if (head) {
+								head = concat(head, value);
+								const res = parseMp3Head(head);
+								if (res === null) throw new Error('not an MP3 file');
+								if ('audioStart' in res) {
+									p.delayS = res.delay / res.sampleRate;
+									if (res.samples) p.seg.end = p.seg.start + res.samples / res.sampleRate - p.lead;
+									p.exact = true;
+									pass(head.subarray(res.audioStart));
+									head = null;
+								} else if (done) throw new Error('MP3 header incomplete');
+							} else pass(value);
+						}
+						if (done) break;
+					}
+					if (head) throw new Error('no MP3 audio');
+					if (hold.length && !id3v1Tail(hold)) p.parts.push(hold);
+					p.complete = true;
+				} catch (e) {
+					if (this.closed) break;
+					logEvent(`gapless MP3 "${p.seg.track.title}" failed: ${(e as Error)?.message ?? e}`);
+					if (p.next > 0) break; // already appended: can't restart cleanly
+					p.parts = [];
+					await new Promise((res) => setTimeout(res, 600 * (attempt + 1)));
+				}
+			}
+			if (!p.complete && !this.closed) p.failed = true;
+			p.fetching = null;
+		})();
+	}
+
 	/** Stream a track's MP3 in; the pump appends parts while the rest is still arriving, so playback
 	 *  starts after the first chunk instead of after the whole track. */
 	private fetchBytes(p: Pending) {
@@ -351,6 +411,10 @@ export class GaplessStream {
 		}
 		if (this.kind === 'flac') {
 			this.fetchFlac(p, url);
+			return;
+		}
+		if (this.kind === 'mp3o') {
+			this.fetchMp3Original(p, url);
 			return;
 		}
 		p.fetching = (async () => {
@@ -473,7 +537,8 @@ export class GaplessStream {
 					sb.appendWindowStart = 0;
 					sb.appendWindowEnd = Infinity;
 					// (The first `lead` seconds land before appendWindowStart and are dropped.)
-					sb.timestampOffset = p.seg.start - (this.kind === 'mp3' ? MP3_DELAY_S + p.lead : 0);
+					const delay = this.kind === 'mp3' ? MP3_DELAY_S : this.kind === 'mp3o' ? p.delayS : 0;
+					sb.timestampOffset = p.seg.start - delay - (this.kind === 'flac' ? 0 : p.lead);
 					sb.appendWindowEnd = p.seg.end;
 					sb.appendWindowStart = p.seg.start;
 					p.placed = true;

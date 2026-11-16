@@ -26,6 +26,8 @@
 		setAutoplay,
 		gapless,
 		setGapless,
+		gaplessOrig,
+		setGaplessOriginalMp3,
 		smooth,
 		setSmooth,
 		type KeepAlive
@@ -186,6 +188,19 @@
 		<div class="seg">
 			<button class="seg-btn" class:sel={gapless.on} onclick={() => setGapless(true)}>On</button>
 			<button class="seg-btn" class:sel={!gapless.on} onclick={() => setGapless(false)}>Off</button>
+		</div>
+		<p class="dim">
+			Experimental: join MP3 albums and mixes from the original files, cutting each track's encoder
+			delay exactly, instead of Plex's converted copy. The joins come closest to seamless; if a file
+			won't play this way, it falls back to the normal way.
+		</p>
+		<div class="seg">
+			<button class="seg-btn" class:sel={gaplessOrig.on} onclick={() => setGaplessOriginalMp3(true)}
+				>Original MP3s</button
+			>
+			<button class="seg-btn" class:sel={!gaplessOrig.on} onclick={() => setGaplessOriginalMp3(false)}
+				>Converted (default)</button
+			>
 		</div>
 	</div>
 

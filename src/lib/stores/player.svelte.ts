@@ -56,6 +56,14 @@ export function setGapless(on: boolean): void {
 	gapless.on = on;
 	writeJSON(GAPLESS_KEY, on);
 }
+// Experimental: splice MP3 albums from the ORIGINAL files (exact LAME delay/padding) instead of
+// Plex's MP3 transcode, which adds a re-encode at every join. Off by default.
+const ORIG_MP3_KEY = STORAGE_PREFIX + 'gapless.originalMp3';
+export const gaplessOrig = $state({ on: readJSON<boolean>(ORIG_MP3_KEY, false) === true });
+export function setGaplessOriginalMp3(on: boolean): void {
+	gaplessOrig.on = on;
+	writeJSON(ORIG_MP3_KEY, on);
+}
 const GAPLESS_MIN_MS = 20_000;
 const GAPLESS_MAX_MS = 20 * 60 * 1000;
 let stream: GaplessStream | null = null;
@@ -167,8 +175,15 @@ function isFlac(t: Metadata): boolean {
 	const m = t.Media?.[0];
 	return (m?.container ?? m?.audioCodec ?? '').toLowerCase() === 'flac';
 }
+function isMp3(t: Metadata): boolean {
+	const m = t.Media?.[0];
+	return (m?.container ?? m?.audioCodec ?? '').toLowerCase() === 'mp3';
+}
 function gaplessKind(t: Metadata): GaplessKind {
-	return isFlac(t) && bitrateFor() == null && gaplessSupported('flac') ? 'flac' : 'mp3';
+	if (bitrateFor() != null) return 'mp3'; // capped quality: the transcode saves data
+	if (isFlac(t) && gaplessSupported('flac')) return 'flac';
+	if (gaplessOrig.on && isMp3(t) && gaplessSupported('mp3o')) return 'mp3o';
+	return 'mp3';
 }
 let streamKind: GaplessKind = 'mp3';
 
@@ -180,6 +195,7 @@ function releaseOf(t: Metadata | null | undefined): string {
 function gaplessPair(a: Metadata | null | undefined, b: Metadata | null | undefined): boolean {
 	if (!a || !b || !releaseOf(a) || releaseOf(a) !== releaseOf(b)) return false;
 	if (isFlac(a) !== isFlac(b)) return false; // one stream = one format
+	if (streamKind === 'mp3o' && stream && !(isMp3(a) && isMp3(b))) return false; // originals: MP3 only
 	return [a, b].every((t) => {
 		const d = t.duration ?? 0;
 		return d >= GAPLESS_MIN_MS && d <= GAPLESS_MAX_MS;
@@ -200,7 +216,9 @@ function gaplessNext(prev: Metadata): Metadata | null {
 }
 function gaplessUrl(t: Metadata): string | null {
 	const base = session.streamBase ?? undefined;
-	return streamKind === 'flac' ? streamUrl(t, base) : transcodeUrl(t, bitrateFor() ?? 320, base);
+	return streamKind === 'flac' || streamKind === 'mp3o'
+		? streamUrl(t, base)
+		: transcodeUrl(t, bitrateFor() ?? 320, base);
 }
 function stopStream() {
 	stream?.destroy();
