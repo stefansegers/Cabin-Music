@@ -12,6 +12,7 @@
 
 	let header = $state<Metadata | null>(null);
 	let tracks = $state<Metadata[]>([]);
+	let view = $state<Metadata[]>([]);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 
@@ -77,7 +78,7 @@
 				{/if}
 				{#if metaTail}<p class="meta dim">{metaTail}</p>{/if}
 				<div class="actions">
-					<button class="play-btn" onclick={() => playList(tracks, 0)} disabled={!tracks.length}>
+					<button class="play-btn" onclick={() => playList(view.length ? view : tracks, 0)} disabled={!tracks.length}>
 						<Icon name="play" size={20} /> Play
 					</button>
 					<button
@@ -102,7 +103,7 @@
 			</div>
 		</header>
 
-		<TrackList {tracks} discs />
+		<TrackList {tracks} discs sortable bind:view />
 	{/if}
 </section>
 

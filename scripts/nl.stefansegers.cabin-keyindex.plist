@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Cabin Music: refresh the BPM/key index every morning, after Plex's maintenance window (2–8).
+     Install: cp to ~/Library/LaunchAgents/ and  launchctl bootstrap gui/$(id -u) <that file>  -->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>nl.stefansegers.cabin-keyindex</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/opt/homebrew/bin/node</string>
+		<string>/Users/stefansegers/docker/cabin-music/scripts/keyindex.mjs</string>
+	</array>
+	<key>WorkingDirectory</key>
+	<string>/Users/stefansegers/docker/cabin-music</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+	</dict>
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Hour</key>
+		<integer>9</integer>
+		<key>Minute</key>
+		<integer>0</integer>
+	</dict>
+	<key>StandardOutPath</key>
+	<string>/Users/stefansegers/Library/Logs/cabin-keyindex.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Users/stefansegers/Library/Logs/cabin-keyindex.log</string>
+</dict>
+</plist>

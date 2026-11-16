@@ -37,6 +37,7 @@
 		const min = Math.round(ms / 60000);
 		return min >= 60 ? `${Math.floor(min / 60)} hr ${min % 60} min` : `${min} min`;
 	}
+	let view = $state<Metadata[]>([]);
 	const meta = $derived.by(() => {
 		if (!tracks.length) return '';
 		const ms = tracks.reduce((a, t) => a + (t.duration ?? 0), 0);
@@ -57,7 +58,8 @@
 			<div class="actions">
 				<button
 					class="play-btn"
-					onclick={() => (onPlay ? onPlay() : playList(tracks, 0, { shuffle: false }))}
+					onclick={() =>
+						onPlay && view === tracks ? onPlay() : playList(view.length ? view : tracks, 0, { shuffle: false })}
 					disabled={!tracks.length}
 				>
 					<Icon name="play" size={20} /> Play
@@ -79,7 +81,7 @@
 	{:else if error}
 		<p class="err">{error}</p>
 	{:else}
-		<TrackList {tracks} {showArtist} ordinal />
+		<TrackList {tracks} {showArtist} ordinal sortable bind:view />
 	{/if}
 </section>
 

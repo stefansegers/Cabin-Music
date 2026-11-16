@@ -22,7 +22,7 @@ interface Env {
 	/** Optional KV for synced app state (pins). Without it, /state answers 404 and the SPA keeps
 	 *  state in the browser only. */
 	CABIN_KV?: {
-		get(key: string): Promise<string | null>;
+		get(key: string, opts?: { cacheTtl?: number }): Promise<string | null>;
 		put(key: string, value: string): Promise<void>;
 		delete(key: string): Promise<void>;
 	};
@@ -111,6 +111,47 @@ async function handleState(request: Request, env: Env, name: string): Promise<Re
 		return new Response(null, { status: 204 });
 	}
 	return new Response('method not allowed', { status: 405 });
+}
+
+// ── BPM + key index (/tags/<machineIdentifier>) ─────────────────────────────────────────────────
+// Plex strips the ID3 tags from the MP3s it serves, so the app can't read Mixed In Key's BPM and key.
+// scripts/keyindex.mjs reads them on the Plex machine and stores them in KV per server. Handed only
+// to a Plex account that plex.tv says can reach that server.
+const accessCache = new Map<string, number>(); // sha(token)+server → expiry
+async function canReachServer(request: Request, machineId: string): Promise<boolean> {
+	const token = request.headers.get('X-Plex-Token');
+	if (!token) return false;
+	const cacheKey = (await sha256Hex(token)) + ':' + machineId;
+	if ((accessCache.get(cacheKey) ?? 0) > Date.now()) return true;
+	let res: Response;
+	try {
+		res = await fetch('https://plex.tv/api/v2/resources?includeHttps=1', {
+			headers: {
+				Accept: 'application/json',
+				'X-Plex-Token': token,
+				'X-Plex-Client-Identifier': request.headers.get('X-Plex-Client-Identifier') || 'cabin-music-worker',
+				'X-Plex-Product': 'Cabin Music'
+			}
+		});
+	} catch {
+		return false;
+	}
+	if (!res.ok) return false;
+	const list = (await res.json().catch(() => [])) as { clientIdentifier?: string }[];
+	const ok = Array.isArray(list) && list.some((r) => r.clientIdentifier === machineId);
+	if (ok) accessCache.set(cacheKey, Date.now() + ACCOUNT_TTL_MS);
+	return ok;
+}
+async function handleTags(request: Request, env: Env, machineId: string): Promise<Response> {
+	if (!env.CABIN_KV || !/^[0-9a-f]{20,64}$/i.test(machineId)) return new Response('not found', { status: 404 });
+	if (request.method !== 'GET') return new Response('method not allowed', { status: 405 });
+	if (!(await isAuthed(request, env))) return new Response(GATE_401_BODY, { status: 401 });
+	if (!(await canReachServer(request, machineId))) return new Response('no access to that server', { status: 403 });
+	const value = await env.CABIN_KV.get(`tags:${machineId}`, { cacheTtl: 300 });
+	if (value === null) return new Response('no index for this server', { status: 404 });
+	return new Response(value, {
+		headers: { 'content-type': 'application/json', 'cache-control': 'private, max-age=3600' }
+	});
 }
 
 // SSRF guard: only proxy to Plex's own hosts.
@@ -266,6 +307,10 @@ export default {
 				});
 			}
 			return handleAuth(request, env);
+		}
+
+		if (url.pathname.startsWith('/tags/')) {
+			return handleTags(request, env, url.pathname.slice('/tags/'.length));
 		}
 
 		if (url.pathname.startsWith('/state/')) {
