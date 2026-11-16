@@ -99,6 +99,25 @@ export class GaplessStream {
 	}
 	private onWaiting = () => this.jumpGap();
 
+	/** MP3: start this track where the previous one REALLY ended. Plex's duration for a transcode can
+	 *  be a little longer than the audio it sends (0.1 s measured); placing the track at that duration
+	 *  would leave a silent gap the element stalls on. The previous track is fully appended by now, so
+	 *  the buffer's end is its true end: pull this segment (and any planned after it) back onto it. */
+	private closeGap(seg: Segment, sb: SourceBuffer) {
+		if (this.kind !== 'mp3') return;
+		const i = this.segments.indexOf(seg);
+		if (i <= 0 || !sb.buffered.length) return;
+		const realEnd = sb.buffered.end(sb.buffered.length - 1);
+		const gap = seg.start - realEnd;
+		if (gap <= 0.001 || gap > MAX_GAP_S) return;
+		this.segments[i - 1].end = realEnd;
+		for (let j = i; j < this.segments.length; j++) {
+			this.segments[j].start -= gap;
+			this.segments[j].end -= gap;
+		}
+		logEvent(`gapless: closed a ${gap.toFixed(2)} s gap before "${seg.track.title}"`);
+	}
+
 	/** Stalled with the next buffered range just ahead (the element stops ~0.4 s before a range's
 	 *  end when nothing follows it directly): jump to that range. */
 	private jumpGap() {
@@ -435,6 +454,7 @@ export class GaplessStream {
 					// timestampOffset can't change. abort() resets the parser (dropping that partial frame,
 					// which is past the previous track's appendWindowEnd anyway) and the append window.
 					if (this.ms.readyState === 'open') sb.abort();
+					this.closeGap(p.seg, sb);
 					// Place this track: cut the encoder delay and the end padding exactly.
 					sb.appendWindowStart = 0;
 					sb.appendWindowEnd = Infinity;
