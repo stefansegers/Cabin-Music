@@ -30,6 +30,10 @@ const CHUNK = 512 * 1024; // bytes per appendBuffer
 const AHEAD_S = 45; // keep this much audio buffered ahead of the playhead
 const BEHIND_S = 15; // keep this much behind it (small seeks back stay instant)
 const PUMP_MS = 1000;
+// Plex's duration for a transcoded MP3 can be a little longer than the audio it sends, which leaves a
+// sliver of nothing (measured: 0.1 s) between two tracks. The element stalls on such a gap forever,
+// so the playhead is moved over it — never over more than this.
+const MAX_GAP_S = 2;
 const EMPTY = new Uint8Array(0);
 
 export interface Segment {
@@ -91,6 +95,24 @@ export class GaplessStream {
 		private onFail: (why: string) => void
 	) {
 		this.url = URL.createObjectURL(this.ms);
+		a.addEventListener('waiting', this.onWaiting);
+	}
+	private onWaiting = () => this.jumpGap();
+
+	/** Stalled with the next buffered range just ahead (the element stops ~0.4 s before a range's
+	 *  end when nothing follows it directly): jump to that range. */
+	private jumpGap() {
+		const b = this.sb?.buffered;
+		if (this.closed || !b || this.a.seeking || this.a.readyState >= 3) return;
+		const t = this.a.currentTime;
+		for (let i = 0; i < b.length; i++) {
+			const gap = b.start(i) - t;
+			if (gap > 0 && gap <= MAX_GAP_S) {
+				logEvent(`gapless: skipped a ${gap.toFixed(2)} s gap at ${t.toFixed(1)} s`);
+				this.a.currentTime = b.start(i) + 0.01;
+				return;
+			}
+		}
 	}
 
 	/** Attach to the element and start with `first`, playing from `offsetS` into it. */
@@ -162,6 +184,7 @@ export class GaplessStream {
 	destroy(): void {
 		if (this.closed) return;
 		this.closed = true;
+		this.a.removeEventListener('waiting', this.onWaiting);
 		this.abort.abort();
 		if (this.timer) clearInterval(this.timer);
 		this.queue = [];
@@ -364,6 +387,7 @@ export class GaplessStream {
 		if (this.busy || this.closed || !this.sb) return;
 		this.busy = true;
 		try {
+			if (!this.a.paused) this.jumpGap();
 			const now = this.a.currentTime;
 			// Plan the next track of the album once the last planned one is being appended.
 			const last = this.segments[this.segments.length - 1];
