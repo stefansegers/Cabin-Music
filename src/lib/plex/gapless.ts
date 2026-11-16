@@ -109,7 +109,10 @@ export class GaplessStream {
 		if (i <= 0 || !sb.buffered.length) return;
 		const realEnd = sb.buffered.end(sb.buffered.length - 1);
 		const gap = seg.start - realEnd;
-		if (gap <= 0.001 || gap > MAX_GAP_S) return;
+		// Any size: a track split off a whole-CD MP3 can keep that file's header and claim the CD's
+		// length (Turn Up The Bass: 44 min for a 2-min track). The previous track is fully appended,
+		// so where its audio ended is known.
+		if (gap <= 0.001) return;
 		this.segments[i - 1].end = realEnd;
 		for (let j = i; j < this.segments.length; j++) {
 			this.segments[j].start -= gap;
