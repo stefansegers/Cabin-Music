@@ -646,8 +646,60 @@ function maybeAutoExtend() {
 	if (player.index >= player.queue.length - (feed ? 5 : 2)) void autoExtend();
 }
 
-/** Append tracks that sound like the end of the queue (Plex sonic analysis). Falls back to the last
- *  artist's radio when a track has no sonic neighbours. Resolves true when something was added. */
+/** Where a batch of "more like this" came from (shown when song radio starts). */
+export type MoreSource = 'sonic' | 'artist' | 'genre' | 'random';
+
+/** Tracks that go well after `seed`, best source first: Plex sonic analysis, then the artist's
+ *  radio, then the album's (first) genre, then anything from the library. */
+async function findMore(
+	seed: Metadata,
+	have: Set<string | undefined>,
+	n = 15
+): Promise<{ items: Metadata[]; source: MoreSource; label?: string } | null> {
+	const similar = await getSonicallySimilar(seed.ratingKey, { limit: 40 }).catch(() => []);
+	const fresh = similar.filter(
+		(t) => t.type === 'track' && !have.has(t.ratingKey) && !!t.Media?.[0]?.Part?.[0]?.key
+	);
+	// The closest matches first, lightly shuffled so the same seed doesn't give the same run.
+	const pick = shuffled(fresh.slice(0, 25)).slice(0, n);
+	if (pick.length) return { items: pick, source: 'sonic' };
+	const artistKey = seed.grandparentRatingKey;
+	if (artistKey) try {
+		const stationKey = await getArtistStationKey(artistKey);
+		if (stationKey) {
+			const q = await createPlayQueue(stationUri(stationKey), { continuous: true });
+			const items = q.items.filter((t) => !have.has(t.ratingKey)).slice(0, n);
+			if (items.length) return { items, source: 'artist', label: seed.grandparentTitle };
+		}
+	} catch {
+		/* artist radio unavailable — try the genre next */
+	}
+	// No sonic data (analysis not run / not usable on this server): stay in the same genre. The
+	// FIRST genre of the album counts — files often carry several, and the first is the real one.
+	const [full, album] = await Promise.all([
+		getMetadata(seed.ratingKey).catch(() => null),
+		seed.parentRatingKey ? getMetadata(seed.parentRatingKey).catch(() => null) : null
+	]);
+	const sectionId = String(full?.librarySectionID ?? album?.librarySectionID ?? seed.librarySectionID ?? '');
+	const genre = album?.Genre?.[0] ?? full?.Genre?.[0];
+	if (sectionId && genre?.id != null) {
+		// Use the cleaned-up group (all spellings of this genre) when it is known.
+		const group = groupForTag(cachedTagGroups(sectionId, 'genre') ?? [], genre.tag);
+		const ids = group ? group.ids.join(',') : String(genre.id);
+		const tracks = await getGenreTracksShuffled(sectionId, ids, 40);
+		const items = tracks.filter((t) => !have.has(t.ratingKey)).slice(0, n);
+		if (items.length) return { items, source: 'genre', label: group?.name ?? genre.tag };
+	}
+	if (sectionId) {
+		const res = await getAll(sectionId, { type: TYPE.track, sort: 'random', size: 30 });
+		const items = res.items.filter((t) => !have.has(t.ratingKey)).slice(0, n);
+		if (items.length) return { items, source: 'random' };
+	}
+	return null;
+}
+
+/** Append tracks that go well after the end of the queue (see findMore). A station (feed) keeps to
+ *  its own source instead. Resolves true when something was added. */
 function autoExtend(): Promise<boolean> {
 	if (autoExtending) return autoExtending;
 	autoExtending = (async () => {
@@ -665,60 +717,11 @@ function autoExtend(): Promise<boolean> {
 				}
 				return false;
 			}
-			const similar = await getSonicallySimilar(seed.ratingKey, { limit: 40 }).catch(() => []);
-			const fresh = similar.filter(
-				(t) => t.type === 'track' && !have.has(t.ratingKey) && !!t.Media?.[0]?.Part?.[0]?.key
-			);
-			// The closest matches first, lightly shuffled so the same seed doesn't give the same run.
-			const pick = shuffled(fresh.slice(0, 25)).slice(0, 15);
-			if (pick.length) {
-				logEvent(`autoplay: +${pick.length} similar to "${seed.title}"`);
-				appendToQueue(pick);
+			const more = await findMore(seed, have);
+			if (more) {
+				logEvent(`autoplay: +${more.items.length} (${more.source}${more.label ? ` "${more.label}"` : ''}) after "${seed.title}"`);
+				appendToQueue(more.items);
 				return true;
-			}
-			const artistKey = seed.grandparentRatingKey;
-			if (artistKey) try {
-				const stationKey = await getArtistStationKey(artistKey);
-				if (stationKey) {
-					const q = await createPlayQueue(stationUri(stationKey), { continuous: true });
-					const items = q.items.filter((t) => !have.has(t.ratingKey)).slice(0, 15);
-					if (items.length) {
-						logEvent(`autoplay: +${items.length} from artist radio of "${seed.grandparentTitle ?? '?'}"`);
-						appendToQueue(items);
-						return true;
-					}
-				}
-			} catch {
-				/* artist radio unavailable — try the genre next */
-			}
-			// No sonic data (analysis not run / not usable on this server): stay in the same genre. The
-			// FIRST genre of the album counts — files often carry several, and the first is the real one.
-			const [full, album] = await Promise.all([
-				getMetadata(seed.ratingKey).catch(() => null),
-				seed.parentRatingKey ? getMetadata(seed.parentRatingKey).catch(() => null) : null
-			]);
-			const sectionId = String(full?.librarySectionID ?? album?.librarySectionID ?? '');
-			const genre = album?.Genre?.[0] ?? full?.Genre?.[0];
-			if (sectionId && genre?.id != null) {
-				// Use the cleaned-up group (all spellings of this genre) when it is known.
-				const group = groupForTag(cachedTagGroups(sectionId, 'genre') ?? [], genre.tag);
-				const ids = group ? group.ids.join(',') : String(genre.id);
-				const tracks = await getGenreTracksShuffled(sectionId, ids, 40);
-				const items = tracks.filter((t) => !have.has(t.ratingKey)).slice(0, 15);
-				if (items.length) {
-					logEvent(`autoplay: +${items.length} from genre "${genre.tag}"`);
-					appendToQueue(items);
-					return true;
-				}
-			}
-			if (sectionId) {
-				const res = await getAll(sectionId, { type: TYPE.track, sort: 'random', size: 30 });
-				const items = res.items.filter((t) => !have.has(t.ratingKey)).slice(0, 15);
-				if (items.length) {
-					logEvent(`autoplay: +${items.length} random from the library`);
-					appendToQueue(items);
-					return true;
-				}
 			}
 			logEvent(`autoplay: nothing found after "${seed.title}"`);
 			return false;
@@ -1145,20 +1148,41 @@ export async function playArtistRadio(artistKey: string): Promise<void> {
 	}
 }
 
-/** "Track Radio" — play tracks sonically similar to the given song (Plex `/nearest`). Tracks don't
- *  expose a `station` like artists do, so we build the queue from the sonic-similarity results. */
-export async function playTrackRadio(seed: Metadata | null | undefined): Promise<void> {
-	if (!seed?.ratingKey) return;
+/** "Song radio" — endless radio from a song. The song keeps playing (when it is the current one);
+ *  what comes after is replaced with music like it: sonically similar when Plex has sonic analysis,
+ *  else the artist's radio, the album's genre, or the library (see findMore). Every top-up seeds from
+ *  the last track, so the station keeps going. Resolves with where the music came from, or null. */
+export async function playTrackRadio(
+	seed: Metadata | null | undefined
+): Promise<{ source: MoreSource; label?: string } | null> {
+	if (!seed?.ratingKey) return null;
 	try {
-		const similar = await getSonicallySimilar(seed.ratingKey, { limit: 60 });
-		const playable = similar.filter(
-			(t) => t.ratingKey !== seed.ratingKey && !!t.Media?.[0]?.Part?.[0]?.key
-		);
-		logEvent(`track radio: ${playable.length}/${similar.length} similar playable for "${seed.title}"`);
-		if (!playable.length) return;
-		playList(playable, 0);
+		const more = await findMore(seed, new Set([seed.ratingKey]), 25);
+		logEvent(`song radio: ${more ? `${more.items.length} (${more.source})` : 'nothing'} for "${seed.title}"`);
+		if (!more) return null;
+		const stationFeed: Feed = async () => {
+			const last = player.queue[player.queue.length - 1] ?? seed;
+			const r = await findMore(last, new Set(player.queue.map((t) => t.ratingKey)));
+			return r?.items ?? [];
+		};
+		const cur = currentTrack();
+		if (cur?.ratingKey === seed.ratingKey) {
+			// Keep the song going; drop what was queued after it.
+			feed = stationFeed;
+			player.radio = null;
+			player.shuffle = false;
+			player.queue = [cur, ...more.items];
+			player.index = 0;
+			base = player.queue.slice();
+			reprime();
+			persist();
+		} else {
+			playList([seed, ...more.items], 0, { shuffle: false, feed: stationFeed });
+		}
+		return { source: more.source, label: more.label };
 	} catch (e) {
-		logEvent(`track radio failed: ${(e as Error)?.message ?? e}`);
+		logEvent(`song radio failed: ${(e as Error)?.message ?? e}`);
+		return null;
 	}
 }
 

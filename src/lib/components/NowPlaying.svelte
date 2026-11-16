@@ -23,6 +23,29 @@
 
 	let showQueue = $state(false);
 
+	// Song radio: a tap replaces what's next with music like this song. A short note says where the
+	// music comes from, so it's clear the tap did something (the song itself keeps playing).
+	let radioBusy = $state(false);
+	let radioNote = $state<string | null>(null);
+	let noteTimer: ReturnType<typeof setTimeout> | undefined;
+	async function startRadio() {
+		if (radioBusy || !track) return;
+		radioBusy = true;
+		const r = await playTrackRadio(track);
+		radioBusy = false;
+		radioNote = !r
+			? 'No radio found for this song'
+			: r.source === 'sonic'
+				? 'Radio on · songs that sound like this'
+				: r.source === 'artist'
+					? `Radio on · ${r.label ?? 'artist'} radio`
+					: r.source === 'genre'
+						? `Radio on · more ${r.label ?? 'of this genre'}`
+						: 'Radio on · from your library';
+		clearTimeout(noteTimer);
+		noteTimer = setTimeout(() => (radioNote = null), 3500);
+	}
+
 	const track = $derived(currentTrack());
 	const artThumb = $derived(track?.parentThumb ?? track?.thumb ?? null);
 	const bgArt = $derived(artThumb ? artUrl(artThumb, 480) : null); // blurred UltraBlur backdrop
@@ -95,16 +118,21 @@
 		<div class="np-scrim"></div>
 	{/if}
 	<button class="close" onclick={toggleExpanded} aria-label="Close"><Icon name="chevron-down" size={32} /></button>
-	<button class="queuebtn" class:on={showQueue} onclick={() => (showQueue = !showQueue)} aria-label="Queue">
-		<Icon name="queue" size={26} />
+	<button class="queuebtn pill" class:on={showQueue} onclick={() => (showQueue = !showQueue)} aria-label="Queue">
+		<Icon name="queue" size={30} /><span>Up next</span>
 	</button>
 	<button
-		class="radiobtn"
-		onclick={() => playTrackRadio(track)}
+		class="radiobtn pill"
+		class:busy={radioBusy}
+		onclick={startRadio}
+		disabled={radioBusy}
 		aria-label="Start radio from this song"
 	>
-		<Icon name="radio" size={26} />
+		<Icon name="radio" size={30} /><span>{radioBusy ? 'Finding…' : 'Song radio'}</span>
 	</button>
+	{#if radioNote}
+		<div class="radionote" role="status">{radioNote}</div>
+	{/if}
 
 	{#if showQueue}
 		<div class="queue">
@@ -219,6 +247,38 @@
 		top: 1.25rem;
 		left: 1.25rem;
 	}
+	/* Corner buttons with a label, so it's obvious what they do (an icon alone was easy to miss). */
+	.pill {
+		width: auto;
+		height: 4.5rem;
+		padding: 0 1.5rem 0 1.25rem;
+		border-radius: 2.25rem;
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+		font-size: 1.15rem;
+		font-weight: 600;
+	}
+	.pill.busy {
+		opacity: 0.6;
+	}
+	.radionote {
+		position: absolute;
+		bottom: 6.75rem;
+		right: 1.25rem;
+		z-index: 1;
+		padding: 0.75rem 1.1rem;
+		border-radius: 0.9rem;
+		background: var(--surface);
+		color: var(--text);
+		font-size: 1.05rem;
+		font-weight: 600;
+		box-shadow: 0 0.5rem 1.5rem rgb(0 0 0 / 0.3);
+	}
+	:global([data-drive='rhd']) .radionote {
+		right: auto;
+		left: 1.25rem;
+	}
 	.queuebtn {
 		bottom: 1.25rem;
 		left: 1.25rem;
@@ -230,7 +290,7 @@
 	.radiobtn {
 		bottom: 1.25rem;
 		right: 1.25rem;
-		color: var(--text-dim);
+		color: var(--text);
 	}
 	/* Right-hand drive: mirror the corner controls to the side nearest the driver (the right). */
 	:global([data-drive='rhd']) .close,
