@@ -192,7 +192,7 @@
 	{/snippet}
 
 	{#snippet nowInfo()}
-		<div class="art"><Art thumb={artThumb} w={640} /></div>
+		<div class="art"><Art thumb={artThumb} w={1000} /></div>
 
 		<div class="info">
 			<h1>{track?.title}</h1>
@@ -362,8 +362,11 @@
 		right: auto;
 		left: 1.25rem;
 	}
+	/* As big as the screen allows (up to ~560 px, whatever the display size): the screen height minus
+	   what sits above and below it (title, seekbar, controls, padding). */
 	.art {
-		width: min(46vh, 27.5rem);
+		width: max(10rem, min(100%, calc(100vh - 30rem), 560px));
+		flex: 0 0 auto;
 		aspect-ratio: 1;
 		border-radius: 1.125rem;
 		overflow: hidden;
