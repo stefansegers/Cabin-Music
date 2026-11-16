@@ -4,6 +4,7 @@
 
 import type { Metadata } from '$lib/plex/types';
 import { playbackCandidates, artUrl, transcodeUrl, streamUrl } from '$lib/plex/media';
+import { flowPick } from '$lib/plex/keytags.svelte';
 import { GaplessStream, gaplessSupported, type GaplessKind } from '$lib/plex/gapless';
 import { bitrateFor } from '$lib/stores/quality.svelte';
 import { session } from '$lib/stores/session.svelte';
@@ -778,14 +779,14 @@ async function findMore(
 		(t) => t.type === 'track' && !have.has(t.ratingKey) && !!t.Media?.[0]?.Part?.[0]?.key
 	);
 	// The closest matches first, lightly shuffled so the same seed doesn't give the same run.
-	const pick = shuffled(fresh.slice(0, 25)).slice(0, n);
+	const pick = flowPick(seed, shuffled(fresh.slice(0, 25)), n);
 	if (pick.length) return { items: pick, source: 'sonic' };
 	const artistKey = seed.grandparentRatingKey;
 	if (artistKey) try {
 		const stationKey = await getArtistStationKey(artistKey);
 		if (stationKey) {
 			const q = await createPlayQueue(stationUri(stationKey), { continuous: true });
-			const items = withoutMixes(q.items).filter((t) => !have.has(t.ratingKey)).slice(0, n);
+			const items = flowPick(seed, withoutMixes(q.items).filter((t) => !have.has(t.ratingKey)), n);
 			if (items.length) return { items, source: 'artist', label: seed.grandparentTitle };
 		}
 	} catch {
@@ -804,12 +805,12 @@ async function findMore(
 		const group = groupForTag(cachedTagGroups(sectionId, 'genre') ?? [], genre.tag);
 		const ids = group ? group.ids.join(',') : String(genre.id);
 		const tracks = await getGenreTracksShuffled(sectionId, ids, 60);
-		const items = withoutMixes(tracks).filter((t) => !have.has(t.ratingKey)).slice(0, n);
+		const items = flowPick(seed, withoutMixes(tracks).filter((t) => !have.has(t.ratingKey)), n);
 		if (items.length) return { items, source: 'genre', label: group?.name ?? genre.tag };
 	}
 	if (sectionId) {
 		const res = await getAll(sectionId, { type: TYPE.track, sort: 'random', size: 40 });
-		const items = withoutMixes(res.items).filter((t) => !have.has(t.ratingKey)).slice(0, n);
+		const items = flowPick(seed, withoutMixes(res.items).filter((t) => !have.has(t.ratingKey)), n);
 		if (items.length) return { items, source: 'random' };
 	}
 	return null;

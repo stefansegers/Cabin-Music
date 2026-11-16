@@ -32,6 +32,7 @@
 	} from '$lib/stores/player.svelte';
 	import { session } from '$lib/stores/session.svelte';
 	import { toggleDebug } from '$lib/stores/debug.svelte';
+	import { flowOpts, setFlow } from '$lib/plex/keytags.svelte';
 	import { mixOpts, setExcludeMixes, notMixIds, setNotMix, mixReleaseById } from '$lib/plex/mixes.svelte';
 	import { signOut } from '$lib/plex/auth';
 
@@ -210,6 +211,19 @@
 				{/each}
 			</div>
 		{/if}
+	</div>
+
+	<div class="group">
+		<h2>Songs that mix well</h2>
+		<p class="dim">
+			When autoplay or Song radio picks what comes next, it prefers a song in the same or a
+			neighbouring key on the Camelot wheel, at a similar tempo, so one song flows into the next.
+			Uses the BPM and key from Mixed In Key; without those it picks as before.
+		</p>
+		<div class="seg">
+			<button class="seg-btn" class:sel={flowOpts.on} onclick={() => setFlow(true)}>On</button>
+			<button class="seg-btn" class:sel={!flowOpts.on} onclick={() => setFlow(false)}>Off</button>
+		</div>
 	</div>
 
 	<div class="group">

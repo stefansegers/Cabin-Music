@@ -103,3 +103,62 @@ export function camelotDistance(a: string | null | undefined, b: string | null |
 	if (x.minor === y.minor) return step === 0 ? 0 : step === 1 ? 1 : step === 2 ? 2 : 3;
 	return step === 0 ? 1 : step === 1 ? 2 : 3;
 }
+
+// --- Harmonic flow: autoplay / Song radio pick what mixes well -----------------------------------
+
+const FLOW_KEY = 'cabin.flow';
+function readFlow(): boolean {
+	try {
+		return localStorage.getItem(FLOW_KEY) !== 'false';
+	} catch {
+		return true;
+	}
+}
+export const flowOpts = $state({ on: typeof localStorage !== 'undefined' ? readFlow() : true });
+export function setFlow(on: boolean): void {
+	flowOpts.on = on;
+	try {
+		localStorage.setItem(FLOW_KEY, String(on));
+	} catch {
+		/* storage unavailable: setting lasts this session */
+	}
+}
+
+/** Tempo step between two tracks, as a share of the first: half / double time count as the same. */
+function tempoGap(a: number, b: number): number {
+	return Math.min(Math.abs(a - b), Math.abs(a - 2 * b), Math.abs(2 * a - b)) / a;
+}
+
+/** How well `b` follows `a`: lower is better. Unknown key or tempo sits in the middle, so untagged
+ *  songs still get picked, after the ones that clearly fit. */
+function flowCost(a: KeyTags | null, b: KeyTags | null): number {
+	const key = a?.key && b?.key ? camelotDistance(a.key, b.key) : 1.5; // 0 same … 3 clash
+	let tempo = 1;
+	if (a?.bpm && b?.bpm) {
+		const g = tempoGap(a.bpm, b.bpm);
+		tempo = g <= 0.06 ? 0 : g <= 0.12 ? 1 : 2;
+	}
+	return key * 2 + tempo;
+}
+
+/** `n` tracks from `pool`, chained so each one fits the one before it (starting from `seed`).
+ *  Without the BPM/key index, or with the option off, the pool's own order is kept. */
+export function flowPick(seed: Metadata, pool: Metadata[], n: number): Metadata[] {
+	if (!flowOpts.on || !hasKeyTags() || pool.length <= 1) return pool.slice(0, n);
+	const left = pool.slice();
+	const out: Metadata[] = [];
+	let prev = keyTags(seed);
+	while (out.length < n && left.length) {
+		let best = 0;
+		let bestCost = Infinity;
+		left.forEach((t, i) => {
+			// A little randomness so the same seed doesn't always give the same run.
+			const c = flowCost(prev, keyTags(t)) + Math.random() * 0.9;
+			if (c < bestCost) (bestCost = c), (best = i);
+		});
+		const [t] = left.splice(best, 1);
+		out.push(t);
+		prev = keyTags(t) ?? prev;
+	}
+	return out;
+}
