@@ -15,6 +15,8 @@
 	import { logEvent } from '$lib/stores/debug.svelte';
 	import ShelfTile from './ShelfTile.svelte';
 	import DailyMixCard from './DailyMixCard.svelte';
+	import DecadeCard from './DecadeCard.svelte';
+	import { buildDecades, cachedDecades, decadeTracks, type Decade } from '$lib/plex/decades.svelte';
 	import { activeSection } from '$lib/stores/library.svelte';
 	import { session } from '$lib/stores/session.svelte';
 	import { buildDailyMixes, cachedDailyMixes, dailyMixTracks, type DailyMix } from '$lib/plex/dailyMixes';
@@ -109,6 +111,31 @@
 		}
 	}
 
+	// --- Decades: endless radio per decade ---
+	let decades = $state<Decade[]>([]);
+
+	$effect(() => {
+		const sec = activeSection();
+		if (!sec) return;
+		decades = cachedDecades(sec.key) ?? [];
+		const ctrl = new AbortController();
+		buildDecades(sec.key, ctrl.signal)
+			.then((d) => {
+				if (!ctrl.signal.aborted) decades = d;
+			})
+			.catch((e) => logEvent(`decades failed: ${(e as Error)?.message ?? e}`));
+		return () => ctrl.abort();
+	});
+
+	async function playDecade(d: Decade) {
+		try {
+			const tracks = await decadeTracks(d, 30);
+			if (tracks.length) playList(tracks, 0, { shuffle: false, feed: () => decadeTracks(d, 30) });
+		} catch (e) {
+			logEvent(`decade radio failed: ${(e as Error)?.message ?? e}`);
+		}
+	}
+
 	// --- Continue listening ---
 	let continuing = $state<Metadata[]>([]);
 
@@ -174,6 +201,19 @@
 			{#each dailyMixes as m (m.id)}
 				<div class="slot" style="width: {200 / 16}rem">
 					<DailyMixCard mix={m} size={200} onPlay={() => playDailyMix(m)} />
+				</div>
+			{/each}
+		</div>
+	</section>
+{/if}
+
+{#if decades.length}
+	<section class="shelf">
+		<h2>Decades</h2>
+		<div class="row">
+			{#each decades as d (d.id)}
+				<div class="slot" style="width: {TILE / 16}rem">
+					<DecadeCard decade={d} size={TILE} onPlay={() => playDecade(d)} />
 				</div>
 			{/each}
 		</div>

@@ -73,6 +73,7 @@ export interface Metadata {
 	title: string;
 	parentTitle?: string; // album (for a track) / artist (for an album)
 	grandparentTitle?: string; // artist (for a track)
+	originalTitle?: string; // track artist when it differs from the album artist (compilations)
 	parentRatingKey?: string;
 	grandparentRatingKey?: string;
 	thumb?: string;

@@ -542,13 +542,15 @@ function goTo(i: number) {
 
 // --- public actions ---
 
-/** Play a list of tracks starting at startIndex. opts.radio marks a continuous (radio) queue. */
+/** Play a list of tracks starting at startIndex. opts.radio marks a continuous (radio) queue;
+ *  opts.feed makes it an endless station that tops itself up from that source (e.g. a decade). */
 export function playList(
 	tracks: Metadata[],
 	startIndex = 0,
-	opts: { radio?: RadioState; shuffle?: boolean } = {}
+	opts: { radio?: RadioState; shuffle?: boolean; feed?: Feed } = {}
 ): void {
 	if (!tracks.length) return;
+	feed = opts.feed ?? null;
 	if (typeof opts.shuffle === 'boolean') player.shuffle = opts.shuffle;
 	base = tracks.slice();
 	const start = Math.max(0, Math.min(startIndex, tracks.length - 1));
@@ -610,7 +612,7 @@ export function next(auto = false): void {
 		if (player.repeat === 'all') i = 0;
 		else {
 			// End of queue: keep the music going with similar tracks (autoplay), else stop.
-			if (autoplay.on && !player.radio) {
+			if ((autoplay.on || feed) && !player.radio) {
 				void autoExtend().then((added) => {
 					if (added && player.index + 1 < player.queue.length) goTo(player.index + 1);
 					else if (auto) endOfQueue();
@@ -634,10 +636,14 @@ function endOfQueue() {
 // --- autoplay ---
 let autoExtending: Promise<boolean> | null = null;
 
+/** An endless station's source: returns more tracks of the same kind (a decade, …). */
+export type Feed = () => Promise<Metadata[]>;
+let feed: Feed | null = null;
+
 /** Top up the queue in the background when it is about to run out, so the next track is ready. */
 function maybeAutoExtend() {
-	if (!autoplay.on || player.radio || !player.queue.length) return;
-	if (player.index >= player.queue.length - 2) void autoExtend();
+	if ((!autoplay.on && !feed) || player.radio || !player.queue.length) return;
+	if (player.index >= player.queue.length - (feed ? 5 : 2)) void autoExtend();
 }
 
 /** Append tracks that sound like the end of the queue (Plex sonic analysis). Falls back to the last
@@ -649,6 +655,16 @@ function autoExtend(): Promise<boolean> {
 		if (!seed?.ratingKey) return false;
 		const have = new Set(player.queue.map((t) => t.ratingKey));
 		try {
+			// A station keeps to its own source (no drifting off to similar-sounding music).
+			if (feed) {
+				const items = (await feed()).filter((t) => !have.has(t.ratingKey));
+				if (items.length) {
+					logEvent(`station: +${items.length}`);
+					appendToQueue(items);
+					return true;
+				}
+				return false;
+			}
 			const similar = await getSonicallySimilar(seed.ratingKey, { limit: 40 }).catch(() => []);
 			const fresh = similar.filter(
 				(t) => t.type === 'track' && !have.has(t.ratingKey) && !!t.Media?.[0]?.Part?.[0]?.key

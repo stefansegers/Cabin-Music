@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { decadeOpts, setSkipCompilations } from '$lib/plex/decades.svelte';
 	import { library, setActive } from '$lib/stores/library.svelte';
 	import { theme, setTheme, type ThemeChoice } from '$lib/stores/theme.svelte';
 	import { drive, setDrive, type Drive } from '$lib/stores/drive.svelte';
@@ -116,6 +117,19 @@
 		<div class="seg">
 			<button class="seg-btn" class:sel={autoplay.on} onclick={() => setAutoplay(true)}>On</button>
 			<button class="seg-btn" class:sel={!autoplay.on} onclick={() => setAutoplay(false)}>Off</button>
+		</div>
+	</div>
+
+	<div class="group">
+		<h2>Decade radio: skip compilations</h2>
+		<p class="dim">
+			Plex only knows the year of the album, so a 1985 hit on a 2003 compilation would count as the
+			2000s. With this on, the Decades stations leave out albums that look back — best-ofs,
+			"classics", "back to the 80s" — but keep compilations from the decade itself.
+		</p>
+		<div class="seg">
+			<button class="seg-btn" class:sel={decadeOpts.skipCompilations} onclick={() => setSkipCompilations(true)}>On</button>
+			<button class="seg-btn" class:sel={!decadeOpts.skipCompilations} onclick={() => setSkipCompilations(false)}>Off</button>
 		</div>
 	</div>
 
