@@ -1,13 +1,44 @@
 // Pins — folders, genres, playlists and albums pinned to Home for one-tap access in the car.
-// Synced through the Worker (/state/pins, Cloudflare KV) so a pin made on the Mac shows up in the
-// car. Browser storage is the instant cache (Home renders pins before the network answers) and the
-// fallback when sync is unavailable (dev server, or the passphrase gate is off).
+// PER PLEX ACCOUNT: synced through the Worker (/state/pins, Cloudflare KV, keyed by the account
+// behind the Plex token) so a pin made on the Mac shows up in the car — but only for the person who
+// made it. Browser storage (also keyed by account) is the instant cache (Home renders pins before
+// the network answers) and the fallback when sync is unavailable (dev server, or gate off).
 
-import { readJSON, writeJSON } from '$lib/plex/storage';
+import { readJSON, writeJSON, remove, AccountStore, ClientIdStore } from '$lib/plex/storage';
 import { STORAGE_PREFIX } from '$lib/plex/config';
+import { session } from '$lib/stores/session.svelte';
 import { logEvent } from '$lib/stores/debug.svelte';
 
-const KEY = STORAGE_PREFIX + 'pins';
+// Pre-per-account cache: shared by whoever used this browser, so it can't be trusted to be ours.
+remove(STORAGE_PREFIX + 'pins');
+
+function accountId(): string | null {
+	const id = session.account?.id ?? AccountStore.get()?.id;
+	return id == null ? null : String(id);
+}
+
+function cacheKey(): string | null {
+	const id = accountId();
+	return id ? `${STORAGE_PREFIX}pins.${id}` : null;
+}
+
+function readCache(): Pin[] {
+	const key = cacheKey();
+	return key ? readJSON<Pin[]>(key, []) : [];
+}
+
+function writeCache(list: Pin[]): void {
+	const key = cacheKey();
+	if (key) writeJSON(key, list);
+}
+
+function syncHeaders(): Record<string, string> {
+	const h: Record<string, string> = {};
+	if (session.token) h['X-Plex-Token'] = session.token;
+	const cid = ClientIdStore.get();
+	if (cid) h['X-Plex-Client-Identifier'] = cid;
+	return h;
+}
 const SYNC_URL = '/state/pins';
 const MAX_PINS = 40;
 
@@ -25,7 +56,7 @@ export interface Pin {
 }
 
 export const pins = $state({
-	items: readJSON<Pin[]>(KEY, []),
+	items: readCache(),
 	synced: false
 });
 
@@ -45,9 +76,15 @@ function valid(list: unknown): list is Pin[] {
 
 /** Pull the synced pins (call once after connecting). Browser cache stays on screen meanwhile. */
 export async function loadPins(): Promise<void> {
-	if (!syncAvailable) return;
+	pins.items = readCache(); // the (possibly different) signed-in account's own cache
+	pins.synced = false;
+	if (!syncAvailable || !session.token) return;
 	try {
-		const res = await fetch(SYNC_URL, { cache: 'no-store', credentials: 'same-origin' });
+		const res = await fetch(SYNC_URL, {
+			cache: 'no-store',
+			credentials: 'same-origin',
+			headers: syncHeaders()
+		});
 		if (res.status === 404) {
 			syncAvailable = false; // no KV / gate off → browser-only pins
 			return;
@@ -59,7 +96,7 @@ export async function loadPins(): Promise<void> {
 			if (pins.items.length) void push();
 		} else if (valid(remote)) {
 			pins.items = remote;
-			writeJSON(KEY, remote);
+			writeCache(remote);
 		}
 		pins.synced = true;
 	} catch (e) {
@@ -73,7 +110,7 @@ async function push(): Promise<void> {
 		await fetch(SYNC_URL, {
 			method: 'PUT',
 			credentials: 'same-origin',
-			headers: { 'content-type': 'application/json' },
+			headers: { 'content-type': 'application/json', ...syncHeaders() },
 			body: JSON.stringify(pins.items)
 		});
 	} catch (e) {
@@ -82,7 +119,7 @@ async function push(): Promise<void> {
 }
 
 function save() {
-	writeJSON(KEY, pins.items);
+	writeCache(pins.items);
 	void push();
 }
 

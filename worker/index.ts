@@ -24,15 +24,55 @@ interface Env {
 	CABIN_KV?: {
 		get(key: string): Promise<string | null>;
 		put(key: string, value: string): Promise<void>;
+		delete(key: string): Promise<void>;
 	};
+	/** Plex account id that inherits the pre-per-user shared pins (`state:pins`) on first load. */
+	PINS_LEGACY_OWNER?: string;
 }
 
 // ── Synced state (/state/<name>) ────────────────────────────────────────────────────────────────
-// Small JSON documents shared between devices (e.g. pins made on the Mac show up in the car). Only
-// with the passphrase gate ON: without it anyone with the URL could overwrite them, so the route is
-// disabled and the SPA falls back to browser storage.
+// Small JSON documents shared between one person's devices (e.g. pins made on the Mac show up in the
+// car). Stored PER PLEX ACCOUNT: the request carries the user's Plex token (X-Plex-Token), the Worker
+// asks plex.tv who that is, and keys the document by account id — so everyone who shares the server
+// keeps their own pins. Only with the passphrase gate ON: without it the route is disabled and the
+// SPA falls back to browser storage.
 const STATE_NAMES = new Set(['pins']);
 const STATE_MAX_BYTES = 64 * 1024;
+const ACCOUNT_TTL_MS = 10 * 60 * 1000;
+const accountCache = new Map<string, { id: string; exp: number }>();
+
+async function sha256Hex(text: string): Promise<string> {
+	const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+	return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/** The Plex account id behind the request's token, verified with plex.tv (memoized per isolate). */
+async function plexAccountId(request: Request): Promise<string | null> {
+	const token = request.headers.get('X-Plex-Token');
+	if (!token) return null;
+	const cacheKey = await sha256Hex(token);
+	const hit = accountCache.get(cacheKey);
+	if (hit && hit.exp > Date.now()) return hit.id;
+	let res: Response;
+	try {
+		res = await fetch('https://plex.tv/api/v2/user', {
+			headers: {
+				Accept: 'application/json',
+				'X-Plex-Token': token,
+				'X-Plex-Client-Identifier': request.headers.get('X-Plex-Client-Identifier') || 'cabin-music-worker',
+				'X-Plex-Product': 'Cabin Music'
+			}
+		});
+	} catch {
+		return null;
+	}
+	if (!res.ok) return null;
+	const user = (await res.json().catch(() => null)) as { id?: unknown } | null;
+	if (user?.id == null) return null;
+	const id = String(user.id);
+	accountCache.set(cacheKey, { id, exp: Date.now() + ACCOUNT_TTL_MS });
+	return id;
+}
 
 async function handleState(request: Request, env: Env, name: string): Promise<Response> {
 	if (!env.CABIN_KV || !gateEnabled(env) || !STATE_NAMES.has(name)) {
@@ -41,9 +81,20 @@ async function handleState(request: Request, env: Env, name: string): Promise<Re
 	if (!(await isAuthed(request, env))) {
 		return new Response(GATE_401_BODY, { status: 401 });
 	}
-	const key = `state:${name}`;
+	const account = await plexAccountId(request);
+	if (!account) return new Response('unknown plex account', { status: 403 });
+	const key = `state:${name}:${account}`;
 	if (request.method === 'GET') {
-		const value = await env.CABIN_KV.get(key);
+		let value = await env.CABIN_KV.get(key);
+		// One-time hand-over of the old shared document to its original owner.
+		if (value === null && env.PINS_LEGACY_OWNER && account === env.PINS_LEGACY_OWNER) {
+			const legacy = await env.CABIN_KV.get(`state:${name}`);
+			if (legacy !== null) {
+				await env.CABIN_KV.put(key, legacy);
+				await env.CABIN_KV.delete(`state:${name}`);
+				value = legacy;
+			}
+		}
 		return new Response(value ?? 'null', {
 			headers: { 'content-type': 'application/json', 'cache-control': 'no-store' }
 		});

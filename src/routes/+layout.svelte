@@ -44,11 +44,12 @@
 		}
 	});
 
-	// Once connected, pull the synced pins (Home shows the browser-cached ones meanwhile).
-	let pinsLoaded = false;
+	// Once connected, pull this account's synced pins (Home shows the browser-cached ones meanwhile).
+	// Keyed on the token so switching Plex account loads the new person's pins, not the previous.
+	let pinsLoadedFor: string | null = null;
 	$effect(() => {
-		if (session.status === 'connected' && !pinsLoaded) {
-			pinsLoaded = true;
+		if (session.status === 'connected' && session.token && pinsLoadedFor !== session.token) {
+			pinsLoadedFor = session.token;
 			void loadPins();
 		}
 	});

@@ -7,6 +7,8 @@
 	"routes": [{ "pattern": "teslaplex.stefansegers.nl", "custom_domain": true }],
 	// Synced app state (pins), shared between the Mac and the car. Written only behind the passphrase.
 	"kv_namespaces": [{ "binding": "CABIN_KV", "id": "0d57109da7264540943e23b210919ac3" }],
+	// Pins are stored per Plex account; this account inherits the old shared pin list once.
+	"vars": { "PINS_LEGACY_OWNER": "40356" },
 	// Worker runs in front of the static assets: it proxies /plex (Plex JSON, with CORS headers)
 	// and serves the SPA for everything else via the ASSETS binding.
 	//
