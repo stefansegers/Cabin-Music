@@ -150,7 +150,8 @@ async function handleTags(request: Request, env: Env, machineId: string): Promis
 	const value = await env.CABIN_KV.get(`tags:${machineId}`, { cacheTtl: 300 });
 	if (value === null) return new Response('no index for this server', { status: 404 });
 	return new Response(value, {
-		headers: { 'content-type': 'application/json', 'cache-control': 'private, max-age=3600' }
+		// Short: the index changes every morning (and when it's rebuilt), and stale lengths cost seamless splices.
+		headers: { 'content-type': 'application/json', 'cache-control': 'private, max-age=300' }
 	});
 }
 
