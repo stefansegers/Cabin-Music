@@ -23,6 +23,29 @@
 
 	let showQueue = $state(false);
 
+	// Wide, landscape screens (the car): the queue sits beside the current song instead of replacing
+	// it. Pixels, not rem: the display-size setting scales rem, and the screen itself doesn't change.
+	const WIDE_QUERY = '(min-width: 900px) and (min-aspect-ratio: 6/5)';
+	let wide = $state(typeof matchMedia !== 'undefined' && matchMedia(WIDE_QUERY).matches);
+	$effect(() => {
+		const mq = matchMedia(WIDE_QUERY);
+		const on = () => (wide = mq.matches);
+		mq.addEventListener('change', on);
+		return () => mq.removeEventListener('change', on);
+	});
+
+	// Keep the playing song near the top of the queue list as the queue moves on.
+	let queueEl = $state<HTMLElement | null>(null);
+	$effect(() => {
+		void player.index;
+		const el = queueEl;
+		if (!el) return;
+		requestAnimationFrame(() => {
+			const active = el.querySelector<HTMLElement>('li.active');
+			if (active) el.scrollTo({ top: Math.max(0, active.offsetTop - el.offsetTop - 8), behavior: 'smooth' });
+		});
+	});
+
 	// Song radio: a tap replaces what's next with music like this song. A short note says where the
 	// music comes from, so it's clear the tap did something (the song itself keeps playing).
 	let radioBusy = $state(false);
@@ -101,11 +124,12 @@
 
 <div
 	class="np"
-	class:queueview={showQueue}
+	class:queueview={showQueue && !wide}
+	class:wide
 	role="dialog"
 	aria-label="Now playing"
 	tabindex="-1"
-	style="transform: translateY({dragY}px); transition: transform {dragging ? '0s' : '0.28s ease'}; touch-action: {showQueue
+	style="transform: translateY({dragY}px); transition: transform {dragging ? '0s' : '0.28s ease'}; touch-action: {showQueue && !wide
 		? 'auto'
 		: 'none'};"
 	onpointerdown={onDown}
@@ -118,25 +142,26 @@
 		<div class="np-scrim"></div>
 	{/if}
 	<button class="close" onclick={toggleExpanded} aria-label="Close"><Icon name="chevron-down" size={32} /></button>
-	<button class="queuebtn pill" class:on={showQueue} onclick={() => (showQueue = !showQueue)} aria-label="Queue">
-		<Icon name="queue" size={30} /><span>Up next</span>
-	</button>
-	<button
-		class="radiobtn pill"
-		class:busy={radioBusy}
-		onclick={startRadio}
-		disabled={radioBusy}
-		aria-label="Start radio from this song"
-	>
-		<Icon name="radio" size={30} /><span>{radioBusy ? 'Finding…' : 'Song radio'}</span>
-	</button>
-	{#if radioNote}
-		<div class="radionote" role="status">{radioNote}</div>
-	{/if}
 
-	{#if showQueue}
-		<div class="queue">
+	{#snippet radioButton(extra: string)}
+		<button
+			class="radiobtn pill {extra}"
+			class:busy={radioBusy}
+			onclick={startRadio}
+			disabled={radioBusy}
+			aria-label="Start radio from this song"
+		>
+			<Icon name="radio" size={30} /><span>{radioBusy ? 'Finding…' : 'Song radio'}</span>
+		</button>
+	{/snippet}
+
+	{#snippet queuePanel()}
+		<div class="qhead">
 			<h2>Up Next</h2>
+			{#if wide}{@render radioButton('inline')}{/if}
+		</div>
+		{#if wide && radioNote}<div class="radionote inline" role="status">{radioNote}</div>{/if}
+		<div class="queue" bind:this={queueEl}>
 			<ol>
 				{#each player.queue as t, i (t.playQueueItemID ?? `${t.ratingKey}:${i}`)}
 					<li class:active={i === player.index}>
@@ -164,7 +189,9 @@
 				{/each}
 			</ol>
 		</div>
-	{:else}
+	{/snippet}
+
+	{#snippet nowInfo()}
 		<div class="art"><Art thumb={artThumb} w={640} /></div>
 
 		<div class="info">
@@ -173,25 +200,50 @@
 		</div>
 
 		<div class="seek"><Seekbar current={player.currentTime} duration={player.duration} onseek={seek} /></div>
-	{/if}
+	{/snippet}
 
-	<div class="controls">
-		<button class="sec" class:on={loved} onclick={() => toggleLove(track)} aria-label={loved ? 'Unlove' : 'Love'}>
-			<Icon name={loved ? 'heart-filled' : 'heart'} size={26} />
+	{#snippet controls()}
+		<div class="controls">
+			<button class="sec" class:on={loved} onclick={() => toggleLove(track)} aria-label={loved ? 'Unlove' : 'Love'}>
+				<Icon name={loved ? 'heart-filled' : 'heart'} size={26} />
+			</button>
+			<button class="sec" class:on={player.shuffle} onclick={toggleShuffle} aria-label="Shuffle">
+				<Icon name="shuffle" size={26} />
+			</button>
+			<button class="ctl" onclick={prev} aria-label="Previous"><Icon name="prev" size={34} /></button>
+			<button class="play" onclick={toggle} aria-label={player.playing ? 'Pause' : 'Play'}>
+				<Icon name={player.playing ? 'pause' : 'play'} size={42} />
+			</button>
+			<button class="ctl" onclick={() => next()} aria-label="Next"><Icon name="next" size={34} /></button>
+			<button class="sec" class:on={player.repeat !== 'off'} onclick={cycleRepeat} aria-label="Repeat">
+				<Icon name="repeat" size={26} />
+				{#if player.repeat === 'one'}<span class="one">1</span>{/if}
+			</button>
+		</div>
+	{/snippet}
+
+	{#if wide}
+		<div class="main">
+			{@render nowInfo()}
+			{@render controls()}
+		</div>
+		<aside class="side" aria-label="Up next">
+			{@render queuePanel()}
+		</aside>
+	{:else}
+		<button class="queuebtn pill" class:on={showQueue} onclick={() => (showQueue = !showQueue)} aria-label="Queue">
+			<Icon name="queue" size={30} /><span>Up next</span>
 		</button>
-		<button class="sec" class:on={player.shuffle} onclick={toggleShuffle} aria-label="Shuffle">
-			<Icon name="shuffle" size={26} />
-		</button>
-		<button class="ctl" onclick={prev} aria-label="Previous"><Icon name="prev" size={34} /></button>
-		<button class="play" onclick={toggle} aria-label={player.playing ? 'Pause' : 'Play'}>
-			<Icon name={player.playing ? 'pause' : 'play'} size={42} />
-		</button>
-		<button class="ctl" onclick={() => next()} aria-label="Next"><Icon name="next" size={34} /></button>
-		<button class="sec" class:on={player.repeat !== 'off'} onclick={cycleRepeat} aria-label="Repeat">
-			<Icon name="repeat" size={26} />
-			{#if player.repeat === 'one'}<span class="one">1</span>{/if}
-		</button>
-	</div>
+		{@render radioButton('corner')}
+		{#if radioNote}<div class="radionote" role="status">{radioNote}</div>{/if}
+
+		{#if showQueue}
+			{@render queuePanel()}
+		{:else}
+			{@render nowInfo()}
+		{/if}
+		{@render controls()}
+	{/if}
 </div>
 
 <style>
@@ -232,7 +284,7 @@
 	}
 	.close,
 	.queuebtn,
-	.radiobtn {
+	.radiobtn.corner {
 		position: absolute;
 		width: 4rem;
 		height: 4rem;
@@ -248,7 +300,7 @@
 		left: 1.25rem;
 	}
 	/* Corner buttons with a label, so it's obvious what they do (an icon alone was easy to miss). */
-	.pill {
+	.np .pill {
 		width: auto;
 		height: 4.5rem;
 		padding: 0 1.5rem 0 1.25rem;
@@ -258,6 +310,11 @@
 		gap: 0.6rem;
 		font-size: 1.15rem;
 		font-weight: 600;
+		white-space: nowrap;
+	}
+	/* Narrow screens: keep the controls clear of the corner buttons. */
+	.np:not(.wide) {
+		padding-bottom: 7rem;
 	}
 	.pill.busy {
 		opacity: 0.6;
@@ -288,9 +345,12 @@
 		color: var(--accent);
 	}
 	.radiobtn {
+		color: var(--text);
+		background: var(--surface);
+	}
+	.radiobtn.corner {
 		bottom: 1.25rem;
 		right: 1.25rem;
-		color: var(--text);
 	}
 	/* Right-hand drive: mirror the corner controls to the side nearest the driver (the right). */
 	:global([data-drive='rhd']) .close,
@@ -298,7 +358,7 @@
 		left: auto;
 		right: 1.25rem;
 	}
-	:global([data-drive='rhd']) .radiobtn {
+	:global([data-drive='rhd']) .radiobtn.corner {
 		right: auto;
 		left: 1.25rem;
 	}
@@ -341,18 +401,73 @@
 		width: min(40rem, 92vw);
 	}
 
+	/* Wide screens: the song on the driver's side, the queue beside it. */
+	.np.wide {
+		flex-direction: row;
+		align-items: stretch;
+		gap: clamp(2rem, 4vw, 4rem);
+		padding: 5.5rem clamp(2rem, 4vw, 3.5rem) clamp(1.5rem, 3vw, 2.5rem);
+	}
+	:global([data-drive='rhd']) .np.wide {
+		flex-direction: row-reverse;
+	}
+	.main {
+		flex: 1 1 0;
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: clamp(1rem, 2.5vh, 2rem);
+	}
+	.np.wide .info {
+		max-width: 100%;
+	}
+	.np.wide .seek {
+		width: min(40rem, 100%);
+	}
+	.side {
+		flex: 0 1 34rem;
+		min-width: 22rem;
+		min-height: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
+		padding: 1.25rem;
+		border-radius: 1.25rem;
+		background: color-mix(in srgb, var(--surface) 55%, transparent);
+	}
+	.qhead {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem;
+	}
+	.qhead {
+		width: 100%;
+	}
+	.qhead h2 {
+		margin: 0;
+		font-size: 1.1rem;
+		color: var(--text-dim);
+	}
+	.side .qhead h2 {
+		font-size: 1.35rem;
+		color: var(--text);
+	}
+	.radionote.inline {
+		position: static;
+		box-shadow: none;
+	}
+
 	/* Queue panel */
 	.queue {
+		touch-action: pan-y;
 		width: 100%;
 		flex: 1 1 auto;
 		min-height: 0;
 		overflow-y: auto;
 		-webkit-overflow-scrolling: touch;
-	}
-	.queue h2 {
-		margin: 0 0 0.5rem;
-		font-size: 1.1rem;
-		color: var(--text-dim);
 	}
 	.queue ol {
 		list-style: none;
