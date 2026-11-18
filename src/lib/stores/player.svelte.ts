@@ -24,6 +24,15 @@ import { getSonicallySimilar, getMetadata, getGenreTracksShuffled, getAll, TYPE 
 import { readJSON, writeJSON } from '$lib/plex/storage';
 import { STORAGE_PREFIX } from '$lib/plex/config';
 import { logEvent } from '$lib/stores/debug.svelte';
+import {
+	prefetch,
+	takePrefetched,
+	releasePlaying,
+	cancelPrefetch,
+	expectedBytes,
+	isPrefetchUrl,
+	PREFETCH_MAX_BYTES
+} from '$lib/plex/prefetch';
 
 const KEY = STORAGE_PREFIX + 'player';
 const KEEP_KEY = STORAGE_PREFIX + 'keepalive';
@@ -309,6 +318,14 @@ function el(): HTMLAudioElement | null {
 		}
 		persistSoon();
 		maybeReportTimeline();
+		maybePrefetch();
+	});
+	a.addEventListener('waiting', () => {
+		if (!loadAt && !waitAt) waitAt = Date.now();
+	});
+	a.addEventListener('seeked', () => {
+		if (seekAt) logEvent(`seek ready after ${Date.now() - seekAt}ms${isPrefetchUrl(a.src) ? ' (read-ahead)' : ''}${vis()}`);
+		seekAt = 0;
 	});
 	a.addEventListener('durationchange', () => {
 		if (stream) return; // the stream spans several tracks; per-track duration comes from Plex
@@ -329,9 +346,13 @@ function el(): HTMLAudioElement | null {
 		keepOn();
 		syncMediaPosition(); // the published position kept running while the track loaded
 		if (loadAt) {
-			logEvent(`playing "${currentTrack()?.title ?? '?'}" after ${Date.now() - loadAt}ms${vis()}`);
+			const from = stream ? ' (stream)' : isPrefetchUrl(a.src) ? ' (read-ahead)' : '';
+			logEvent(`playing "${currentTrack()?.title ?? '?'}" after ${Date.now() - loadAt}ms${from}${vis()}`);
 			loadAt = 0;
+		} else if (waitAt) {
+			logEvent(`buffering ${Date.now() - waitAt}ms${vis()}`);
 		}
+		waitAt = 0;
 	});
 	a.addEventListener('pause', () => {
 		// The browser fires 'pause' right before 'ended' when a track finishes on its own. That is a
@@ -547,6 +568,45 @@ function startStream(a: HTMLAudioElement, track: Metadata, offsetS: number): boo
 	return true;
 }
 
+// --- read-ahead (prefetch.ts): the next track downloads while this one plays ---
+let waitAt = 0; // 'waiting' (buffer ran dry) → 'playing', for the log
+let seekAt = 0;
+let prefetchCheckAt = 0;
+const PREFETCH_AFTER_S = 3; // let the current track fill its own buffer first
+
+/** Would load() play this track as a gapless stream (which fetches its own data)? */
+function wouldStream(t: Metadata): boolean {
+	const kind = gaplessKind(t);
+	if (!gapless.on || !gaplessSupported(kind)) return false;
+	if (releaseOf(t) && releaseOf(t) === gaplessBlocked) return false;
+	return !!gaplessNext(t) && gaplessPair(t, t);
+}
+
+function nextQueueIndex(): number {
+	if (player.repeat === 'one') return -1;
+	const i = player.index + 1;
+	if (i < player.queue.length) return i;
+	return player.repeat === 'all' && player.queue.length > 1 ? 0 : -1;
+}
+
+function maybePrefetch() {
+	const now = Date.now();
+	if (now - prefetchCheckAt < 3000) return;
+	prefetchCheckAt = now;
+	if (!player.playing || player.currentTime < PREFETCH_AFTER_S) return;
+	const cur = currentTrack();
+	const i = nextQueueIndex();
+	if (!cur || i < 0) return;
+	const nxt = player.queue[i];
+	if (!nxt?.ratingKey || nxt.ratingKey === cur.ratingKey) return;
+	if (stream && gaplessNext(cur)?.ratingKey === nxt.ratingKey) return; // the stream chains it
+	if (wouldStream(nxt)) return;
+	if (expectedBytes(nxt, bitrateFor()) > PREFETCH_MAX_BYTES) return;
+	const url = playbackCandidates(nxt)[0];
+	// Original files only: a second transcode for the same client could end the one now playing.
+	if (url && !url.includes('/transcode/')) prefetch(nxt, url);
+}
+
 function load(track: Metadata, autoplay: boolean, startAtS?: number) {
 	const a = el();
 	if (!a) return;
@@ -555,6 +615,8 @@ function load(track: Metadata, autoplay: boolean, startAtS?: number) {
 	plan = null;
 	const startAt = startAtS ?? resumePointMs(track) / 1000;
 	if (startStream(a, track, startAt)) {
+		cancelPrefetch();
+		releasePlaying();
 		leadInFor = null;
 		loadAt = Date.now();
 		player.currentTime = startAt;
@@ -566,6 +628,14 @@ function load(track: Metadata, autoplay: boolean, startAtS?: number) {
 	}
 	candidates = playbackCandidates(track);
 	candidateIdx = 0;
+	const pre = takePrefetched(track);
+	if (pre) {
+		candidates.unshift(pre); // the normal URLs stay behind it as the fallback
+		logEvent(`from read-ahead: "${track.title}"`);
+	} else {
+		cancelPrefetch();
+		releasePlaying();
+	}
 	if (!candidates.length) {
 		logEvent(`no playable url for "${track.title}"`);
 		halt();
@@ -902,6 +972,7 @@ export function seek(t: number): void {
 		return;
 	}
 	if (a) {
+		seekAt = Date.now();
 		a.currentTime = t;
 		player.currentTime = t;
 		reportNow(player.playing ? 'playing' : 'paused');
@@ -936,6 +1007,7 @@ export function toggleExpanded(): void {
 
 /** Drop the preloaded next track (e.g. after a quality change) so it re-primes at the new setting. */
 export function invalidatePrefetch(): void {
+	cancelPrefetch();
 	reprime();
 }
 

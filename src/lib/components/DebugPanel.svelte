@@ -1,12 +1,24 @@
 <script lang="ts">
 	// The in-car diagnostic channel (no DevTools). Opened from Settings → Diagnostics.
-	import { debug, toggleDebug } from '$lib/stores/debug.svelte';
+	import { debug, toggleDebug, clearDebug } from '$lib/stores/debug.svelte';
+	import { sendDiag } from '$lib/stores/diag';
 	import { session } from '$lib/stores/session.svelte';
 	import { signOut } from '$lib/plex/auth';
 
 	function maskedToken(t: string | null): string {
 		if (!t) return '—';
 		return t.length <= 4 ? '••••' : '••••' + t.slice(-4);
+	}
+
+	let sendState = $state('');
+	async function send() {
+		sendState = 'Sending…';
+		try {
+			const id = await sendDiag();
+			sendState = `Sent ✓ (${id.slice(11, 19)})`;
+		} catch (e) {
+			sendState = `Not sent: ${(e as Error)?.message ?? e}`;
+		}
 	}
 
 	const origin = typeof location !== 'undefined' ? location.origin : '';
@@ -24,6 +36,12 @@
 			<strong>Cabin · diagnostics</strong>
 			<button class="close" onclick={toggleDebug}>Close</button>
 		</header>
+
+		<div class="actions">
+			<button class="close send" onclick={send}>Send log</button>
+			<button class="close" onclick={clearDebug}>Clear</button>
+			{#if sendState}<span class="sendstate">{sendState}</span>{/if}
+		</div>
 
 		<dl class="kv">
 			<dt>status</dt>
@@ -103,6 +121,18 @@
 		background: var(--surface);
 		color: var(--text);
 		font: inherit;
+	}
+	.actions {
+		display: flex;
+		align-items: center;
+		gap: 0.625rem;
+	}
+	.send {
+		background: var(--accent);
+		font-weight: 600;
+	}
+	.sendstate {
+		color: var(--text-dim);
 	}
 	.signout {
 		margin-top: auto;

@@ -23,7 +23,7 @@ interface Env {
 	 *  state in the browser only. */
 	CABIN_KV?: {
 		get(key: string, opts?: { cacheTtl?: number }): Promise<string | null>;
-		put(key: string, value: string): Promise<void>;
+		put(key: string, value: string, opts?: { expirationTtl?: number }): Promise<void>;
 		delete(key: string): Promise<void>;
 	};
 	/** Plex account id that inherits the pre-per-user shared pins (`state:pins`) on first load. */
@@ -111,6 +111,32 @@ async function handleState(request: Request, env: Env, name: string): Promise<Re
 		return new Response(null, { status: 204 });
 	}
 	return new Response('method not allowed', { status: 405 });
+}
+
+// ── Diagnostics upload (/diag) ──────────────────────────────────────────────────────────────────
+// The car has no DevTools: Settings → Diagnostics → "Send log" posts the in-app log here, so it can
+// be read with `wrangler kv key get diag:latest:<account> --binding CABIN_KV --remote`. Behind the
+// gate and a verified Plex account, size-capped, and kept for 30 days.
+const DIAG_MAX_BYTES = 512 * 1024;
+const DIAG_TTL_S = 30 * 24 * 3600;
+
+async function handleDiag(request: Request, env: Env): Promise<Response> {
+	if (!env.CABIN_KV || !gateEnabled(env)) return new Response('not found', { status: 404 });
+	if (request.method !== 'POST') return new Response('method not allowed', { status: 405 });
+	if (!(await isAuthed(request, env))) return new Response(GATE_401_BODY, { status: 401 });
+	const account = await plexAccountId(request);
+	if (!account) return new Response('unknown plex account', { status: 403 });
+	const body = await request.text();
+	if (body.length > DIAG_MAX_BYTES) return new Response('too large', { status: 413 });
+	try {
+		JSON.parse(body);
+	} catch {
+		return new Response('bad json', { status: 400 });
+	}
+	const id = new Date().toISOString().replace(/[:.]/g, '-');
+	await env.CABIN_KV.put(`diag:${account}:${id}`, body, { expirationTtl: DIAG_TTL_S });
+	await env.CABIN_KV.put(`diag:latest:${account}`, body, { expirationTtl: DIAG_TTL_S });
+	return json({ id });
 }
 
 // ── BPM + key index (/tags/<machineIdentifier>) ─────────────────────────────────────────────────
@@ -312,6 +338,10 @@ export default {
 
 		if (url.pathname.startsWith('/tags/')) {
 			return handleTags(request, env, url.pathname.slice('/tags/'.length));
+		}
+
+		if (url.pathname === '/diag') {
+			return handleDiag(request, env);
 		}
 
 		if (url.pathname.startsWith('/state/')) {
