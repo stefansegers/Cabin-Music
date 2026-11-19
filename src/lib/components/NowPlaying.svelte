@@ -6,6 +6,7 @@
 		next,
 		prev,
 		seek,
+		skipBy,
 		cycleRepeat,
 		toggleShuffle,
 		toggleExpanded,
@@ -200,6 +201,10 @@
 		</div>
 
 		<div class="seek"><Seekbar current={player.currentTime} duration={player.duration} onseek={seek} /></div>
+		<div class="skips">
+			<button class="skip" onclick={() => skipBy(-30)} aria-label="Back 30 seconds"><Icon name="back30" size={40} /></button>
+			<button class="skip" onclick={() => skipBy(30)} aria-label="Forward 30 seconds"><Icon name="fwd30" size={40} /></button>
+		</div>
 	{/snippet}
 
 	{#snippet controls()}
@@ -426,8 +431,28 @@
 	.np.wide .info {
 		max-width: 100%;
 	}
-	.np.wide .seek {
+	.np.wide .seek,
+	.np.wide .skips {
 		width: min(40rem, 100%);
+	}
+	/* ±30s sit under the ends of the seekbar, pulled up into the gap so they read as part of it. */
+	.skips {
+		width: min(40rem, 92vw);
+		display: flex;
+		justify-content: space-between;
+		margin-top: calc(-1 * clamp(0.5rem, 1.5vh, 1.25rem));
+	}
+	.skip {
+		display: grid;
+		place-items: center;
+		width: 4.5rem;
+		height: 4.5rem;
+		border-radius: 50%;
+		color: var(--text-dim);
+	}
+	.skip:active {
+		color: var(--text);
+		background: var(--surface);
 	}
 	.side {
 		flex: 0 1 34rem;

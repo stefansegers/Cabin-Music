@@ -980,6 +980,16 @@ export function seek(t: number): void {
 	}
 }
 
+/** Jump forward/back by `delta` seconds within the current track (the ±30s buttons). Stays a second
+ *  short of the end so a forward skip doesn't trip the auto-advance; use Next for that. */
+export function skipBy(delta: number): void {
+	if (!currentTrack()) return;
+	const d = player.duration;
+	let t = player.currentTime + delta;
+	if (d > 0) t = Math.min(t, d - 1);
+	seek(Math.max(0, t));
+}
+
 export function cycleRepeat(): void {
 	player.repeat = player.repeat === 'off' ? 'all' : player.repeat === 'all' ? 'one' : 'off';
 	persist();

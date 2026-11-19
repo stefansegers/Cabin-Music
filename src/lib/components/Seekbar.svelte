@@ -43,7 +43,7 @@
 	}
 </script>
 
-<div class="seek">
+<div class="seek" class:dragging>
 	<span class="t">{fmt(shown)}</span>
 	<div
 		class="track"
@@ -74,16 +74,18 @@
 	}
 	.t {
 		flex: 0 0 auto;
-		font-size: 0.8rem;
+		font-size: 0.9rem;
 		color: var(--text-dim);
 		font-variant-numeric: tabular-nums;
 		min-width: 3ch;
 		text-align: center;
 	}
+	/* The grab zone is far taller than the groove you see: a finger (or a bumpy car ride) only has
+	   to land somewhere near the line. */
 	.track {
 		position: relative;
 		flex: 1 1 auto;
-		height: 1rem;
+		height: 3rem;
 		display: flex;
 		align-items: center;
 		cursor: pointer;
@@ -94,23 +96,27 @@
 		position: absolute;
 		left: 0;
 		right: 0;
-		height: 0.3125rem;
+		height: 0.5rem;
 		border-radius: 999px;
 		background: var(--slider-track);
 	}
 	.fill {
 		position: absolute;
 		left: 0;
-		height: 0.3125rem;
+		height: 0.5rem;
 		border-radius: 999px;
 		background: var(--accent);
 	}
 	.knob {
 		position: absolute;
-		width: 0.875rem;
-		height: 0.875rem;
+		width: 1.375rem;
+		height: 1.375rem;
 		border-radius: 50%;
 		background: var(--accent);
 		transform: translateX(-50%);
+		transition: transform 0.12s ease;
+	}
+	.dragging .knob {
+		transform: translateX(-50%) scale(1.35);
 	}
 </style>

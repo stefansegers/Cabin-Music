@@ -93,6 +93,14 @@
 	{:else if name === 'pin-filled'}
 		<path d="M9 4h6l-1 5 3 3v2H7v-2l3-3z" fill="currentColor" />
 		<path d="M12 14v6" />
+	{:else if name === 'back30'}
+		<path d="M3.5 12a8.5 8.5 0 1 0 2.5-6" />
+		<polyline points="3 3 6 6 9 3.5" />
+		<text x="12.5" y="15.6" text-anchor="middle" font-size="8.5" font-weight="700" fill="currentColor" stroke="none" font-family="system-ui, sans-serif">30</text>
+	{:else if name === 'fwd30'}
+		<path d="M20.5 12a8.5 8.5 0 1 1-2.5-6" />
+		<polyline points="21 3 18 6 15 3.5" />
+		<text x="11.5" y="15.6" text-anchor="middle" font-size="8.5" font-weight="700" fill="currentColor" stroke="none" font-family="system-ui, sans-serif">30</text>
 	{:else if name === 'chevron-right'}
 		<path d="M9 5l7 7-7 7" />
 	{:else if name === 'check'}
